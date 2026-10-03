@@ -28,7 +28,7 @@ Open [http://localhost:3000](http://localhost:3000). The app auto-connects to th
 
 ### Configuration
 
-The Jellyfin connection lives **server-side only** (the browser talks exclusively to same-origin `/api/*` routes and never sees your credentials). Defaults can be overridden with environment variables:
+The Jellyfin connection lives **server-side only** (the browser talks exclusively to same-origin `/api/*` routes and never sees your credentials). Copy `.env.example` to `.env` and fill in your values:
 
 | Variable             | Description                              |
 | -------------------- | ---------------------------------------- |
@@ -36,8 +36,26 @@ The Jellyfin connection lives **server-side only** (the browser talks exclusivel
 | `JELLYFIN_USERNAME`  | Jellyfin account username                |
 | `JELLYFIN_PASSWORD`  | Jellyfin account password                |
 | `JELLYFIN_API_KEY`   | Optional admin API key (auth fallback)   |
+| `DATABASE_URL`       | SQLite file for the Library Agent        |
+| `FANARTTV_API_KEY`   | Optional Fanart.tv key for artist photos |
 
-Authentication tries `POST /Users/AuthenticateByName` first and falls back to the API key if that fails.
+Authentication tries `POST /Users/AuthenticateByName` first and falls back to the API key if that fails. If the `JELLYFIN_*` variables are unset, the app simply starts on the "Add server" login screen instead.
+
+## Running with Docker (desktop / NAS)
+
+A production image is included — multi-stage, runs the standalone Next.js server and bootstraps the agent's SQLite schema on first start:
+
+```bash
+cp .env.example .env        # fill in your Jellyfin credentials
+docker compose up -d --build
+```
+
+Then open [http://localhost:3000](http://localhost:3000). Two named volumes persist state across rebuilds: `feishin-db` (agent database at `/app/db`) and `feishin-cache` (artwork disk cache at `/app/.cache`). To run without compose:
+
+```bash
+docker build -t feishin-web .
+docker run -d --name feishin -p 3000:3000 --env-file .env feishin-web
+```
 
 ## Architecture
 

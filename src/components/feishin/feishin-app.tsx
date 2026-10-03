@@ -1,6 +1,6 @@
 "use client";
 // Feishin rebuild — app root: layout grid (sidebar / main / right queue / player bar), view routing
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useAuthStore } from "@/store/auth-store";
 import { useRouterStore } from "@/store/router-store";
 import { useSettingsStore } from "@/store/settings-store";
@@ -73,11 +73,38 @@ function MainContent() {
   }
 }
 
-/** Connects to the selected server (server-side proxy performs auth). */
+/** Connects to the selected server (server-side proxy performs auth).
+ *  With no server selected, probes the proxy once for an env-configured
+ *  default (JELLYFIN_* on the server) and seeds it — the credentials
+ *  themselves never reach this client bundle. */
 function useServerConnection() {
   const currentServer = useAuthStore((s) => s.servers.find((x) => x.id === s.currentServerId));
   const status = useAuthStore((s) => s.status);
   const setStatus = useAuthStore((s) => s.setStatus);
+  // false while the initial probe is still pending — used to show a
+  // connecting screen instead of flashing the login view
+  const [seedPending, setSeedPending] = useState(!useAuthStore.getState().currentServer());
+
+  useEffect(() => {
+    if (currentServer || !seedPending) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/jf/__ready", { method: "POST", body: "{}", headers: { "Content-Type": "application/json" } });
+        const info = (await res.json().catch(() => null)) as { url?: string; username?: string; serverName?: string } | null;
+        if (cancelled) return;
+        if (res.ok && info?.url) {
+          useAuthStore.getState().seedServer({ url: info.url, username: info.username, name: info.serverName });
+        }
+        setSeedPending(false);
+      } catch {
+        if (!cancelled) setSeedPending(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentServer, seedPending]);
 
   useEffect(() => {
     if (!currentServer || status === "connected") return;
@@ -101,7 +128,7 @@ function useServerConnection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentServer?.id, status]);
 
-  return { currentServer, status };
+  return { currentServer, status, seedPending };
 }
 
 function ConnectingScreen({ status }: { status: string }) {
@@ -143,7 +170,7 @@ export default function FeishinApp() {
     () => true,
     () => false,
   );
-  const { currentServer, status } = useServerConnection();
+  const { currentServer, status, seedPending } = useServerConnection();
 
   // apply theme on change (also on first mount)
   useEffect(() => {
@@ -172,6 +199,19 @@ export default function FeishinApp() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/feishin-icon.png" alt="Feishin" className="h-16 w-16 animate-pulse" />
       </div>
+    );
+  }
+
+  // probe still deciding whether an env-configured default server exists —
+  // keep the connecting screen up instead of flashing the login view
+  if (!currentServer && seedPending && status !== "error") {
+    return (
+      <>
+        <ConnectingScreen status="connecting" />
+        <AudioEngine />
+        <AgentAutoEq />
+        <Toaster position="bottom-right" theme="dark" />
+      </>
     );
   }
 

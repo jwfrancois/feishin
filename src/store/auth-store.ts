@@ -27,26 +27,38 @@ interface AuthState {
   setCurrentServer: (id: string | null) => void;
   setStatus: (status: ConnectionStatus, info?: { name: string; version: string } | null, error?: string | null) => void;
   currentServer: () => ServerConfig | undefined;
+  /** Seed the default server from the server-side proxy config (/api/jf/__ready).
+   *  Credentials/URL come from the server's environment — never from source. */
+  seedServer: (info: { url?: string; username?: string; name?: string }) => void;
 }
-
-/** Default Jellyfin server — credentials live server-side in src/lib/jf-server.ts */
-const DEFAULT_SERVER: ServerConfig = {
-  id: "srv-desalyn",
-  name: "desalyn",
-  type: "jellyfin",
-  url: "https://manitou.dyabavadra.com",
-  username: "dyabavadra",
-  savePassword: true,
-};
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
-      servers: [DEFAULT_SERVER],
-      currentServerId: DEFAULT_SERVER.id,
+      servers: [],
+      currentServerId: null,
       status: "idle",
       serverInfo: null,
       connectError: null,
+      seedServer: (info) => {
+        const url = (info.url ?? "").replace(/\/+$/, "");
+        if (!url) return;
+        const st = get();
+        const existing = st.servers.find((s) => s.url.replace(/\/+$/, "") === url);
+        if (existing) {
+          if (st.currentServerId !== existing.id) set({ currentServerId: existing.id, status: "idle", serverInfo: null, connectError: null });
+          return;
+        }
+        const server: ServerConfig = {
+          id: "srv-default",
+          name: info.name || "Jellyfin",
+          type: "jellyfin",
+          url,
+          username: info.username ?? "",
+          savePassword: true,
+        };
+        set((s) => ({ servers: [...s.servers, server], currentServerId: server.id, status: "idle", serverInfo: null, connectError: null }));
+      },
       addServer: (s) => {
         const server: ServerConfig = { ...s, id: `srv-${Date.now()}` };
         set((st) => ({ servers: [...st.servers, server], currentServerId: server.id }));

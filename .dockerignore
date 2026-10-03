@@ -1,0 +1,27 @@
+# keep the image clean of host state and secrets
+node_modules
+.next
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+db
+.cache
+*.log
+dev.log
+server.log
+
+# reference checkout, assets and local tooling (not needed inside the image)
+feishin-ref
+examples
+download
+scripts
+tool-results
+agent-ctx
+worklog.md
+
+# docker files themselves
+Dockerfile
+docker-compose.yml
+.dockerignore

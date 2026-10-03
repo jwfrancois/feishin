@@ -45,7 +45,16 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     });
 
     if (!upstream.ok && upstream.status !== 206) {
-      return NextResponse.json({ error: `Jellyfin audio ${upstream.status}` }, { status: upstream.status });
+      // 404/500 here almost always means the file itself is unreadable
+      // server-side (unmounted media share), not a proxy problem — say so.
+      const detail = (await upstream.text().catch(() => "")).slice(0, 120);
+      const hint =
+        upstream.status === 404
+          ? " — file missing or its media share is unmounted on the server"
+          : upstream.status === 500
+            ? " — server could not read/transcode the source (offline media share?)"
+            : "";
+      return NextResponse.json({ error: `Jellyfin audio ${upstream.status}${hint}`, detail }, { status: upstream.status });
     }
 
     const headers = new Headers();

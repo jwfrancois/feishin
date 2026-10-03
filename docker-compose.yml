@@ -1,0 +1,24 @@
+# Feishin (web rebuild) — desktop / NAS deployment.
+#   cp .env.example .env   (fill in your Jellyfin credentials)
+#   docker compose up -d --build
+# The player is then on http://localhost:3000
+services:
+  feishin:
+    build: .
+    image: feishin-web
+    container_name: feishin-web
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # keep the agent database inside the container layout (overrides .env)
+      DATABASE_URL: file:/app/db/custom.db
+    volumes:
+      - feishin-db:/app/db        # Library Agent SQLite database
+      - feishin-cache:/app/.cache # artwork disk cache (300 MB cap, auto-trimmed)
+    restart: unless-stopped
+
+volumes:
+  feishin-db:
+  feishin-cache:

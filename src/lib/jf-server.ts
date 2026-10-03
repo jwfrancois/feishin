@@ -9,13 +9,16 @@ interface JfConnection {
   apiKey: string;
 }
 
-// Connection defaults. Override via environment variables —
+// Connection defaults. Credentials come ONLY from the environment
+// (.env for dev / JELLYFIN_* variables for Docker) — never from source.
 // JELLYFIN_URL, JELLYFIN_USERNAME, JELLYFIN_PASSWORD, JELLYFIN_API_KEY.
+// If unset, the proxy reports "unconfigured" and the UI shows the add-server
+// login screen (servers added there persist via the __configure endpoint).
 const DEFAULT_CONN: JfConnection = {
-  url: process.env.JELLYFIN_URL ?? "https://manitou.dyabavadra.com",
-  username: process.env.JELLYFIN_USERNAME ?? "dyabavadra",
-  password: process.env.JELLYFIN_PASSWORD ?? "bonjour66",
-  apiKey: process.env.JELLYFIN_API_KEY ?? "14c48564a8e040869d1587d27715fde0",
+  url: process.env.JELLYFIN_URL ?? "",
+  username: process.env.JELLYFIN_USERNAME ?? "",
+  password: process.env.JELLYFIN_PASSWORD ?? "",
+  apiKey: process.env.JELLYFIN_API_KEY ?? "",
 };
 
 interface ConnState {
