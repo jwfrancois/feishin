@@ -208,6 +208,7 @@ function RightControls() {
   const volumeWheelStep = useSettingsStore((s) => s.playback.volumeWheelStep);
   const miniViz = useHifiStore((s) => s.miniViz);
   const hifiEnabled = useHifiStore((s) => s.enabled);
+  const agentTuned = useHifiStore((s) => s.autoEq && !!s.agentProfile && !s.agentOverridden);
   const toggleHifiPanel = useHifiUi((s) => s.toggle);
 
   const VolIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
@@ -232,13 +233,14 @@ function RightControls() {
         ) : null}
         <button
           type="button"
-          title="Hi-Fi Studio"
+          title={agentTuned ? "Hi-Fi Studio — agent profile active" : "Hi-Fi Studio"}
           aria-label="Open Hi-Fi Studio"
           data-testid="hifi-open-btn"
-          className={cn("fs-icon-btn p-1.5", hifiEnabled && "text-[var(--primary)]")}
+          className={cn("fs-icon-btn relative p-1.5", hifiEnabled && "text-[var(--primary)]")}
           onClick={toggleHifiPanel}
         >
           <AudioWaveform size={15} />
+          {agentTuned ? <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--primary)]" data-testid="hifi-agent-dot" /> : null}
         </button>
         <button
           type="button"

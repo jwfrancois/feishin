@@ -1,5 +1,8 @@
 // Feishin rebuild — client bridge to the Library Agent (/api/agent/*).
-// Used by views to consume agent-scraped knowledge (bios, lyrics, metadata).
+// Used by views to consume agent-scraped knowledge (bios, lyrics, metadata)
+// and the Auto-EQ sound profiles the agent computes per track/album.
+import type { AgentSoundProfile } from "@/lib/types";
+
 export interface AgentFindingShape {
   kind: string;
   status: string;
@@ -45,4 +48,39 @@ export async function getAgentDiscography(artistId: string, name: string, fetchN
   const data = (await res.json()) as { ok: boolean; releases?: DiscogRelease[] | null; mbid?: string };
   if (!data.ok || !data.releases) return null;
   return { mbid: data.mbid ?? "", releases: data.releases };
+}
+
+export interface AgentSoundProfileParams {
+  itemId: string;
+  itemType: "track" | "album";
+  name: string;
+  artist?: string;
+  album?: string;
+  genres?: string;
+  year?: number;
+  duration?: number;
+}
+
+/**
+ * The agent's Hi-Fi sound profile for a track/album (cached server-side).
+ * `refresh` forces re-analysis; returns null when the agent can't help
+ * (offline, disabled, nothing to analyze).
+ */
+export async function getAgentSoundProfile(params: AgentSoundProfileParams, opts: { refresh?: boolean; cacheOnly?: boolean } = {}): Promise<AgentSoundProfile | null> {
+  const sp = new URLSearchParams({ itemType: params.itemType, name: params.name });
+  if (opts.cacheOnly) sp.set("fetch", "0");
+  if (opts.refresh) sp.set("refresh", "1");
+  if (params.artist) sp.set("artist", params.artist);
+  if (params.album) sp.set("album", params.album);
+  if (params.genres) sp.set("genres", params.genres);
+  if (params.year) sp.set("year", String(params.year));
+  if (params.duration) sp.set("duration", String(Math.round(params.duration)));
+  try {
+    const res = await fetch(`/api/agent/sound-profile/${params.itemId}?${sp.toString()}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { ok: boolean; profile?: AgentSoundProfile | null };
+    return data.ok && data.profile ? data.profile : null;
+  } catch {
+    return null;
+  }
 }

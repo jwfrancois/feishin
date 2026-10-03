@@ -5,8 +5,14 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { EQ_BANDS, EQ_PRESETS, eqPresetGains, type EqPresetId } from "@/lib/audio/eq-presets";
+import type { AgentSoundProfile } from "@/lib/types";
 
 export type DynamicsMode = "off" | "reference" | "night" | "club" | "custom";
+
+/** Runtime status of the agent Auto-EQ pipeline (shared panel ↔ controller). */
+export type AgentEqStatus = "idle" | "analyzing" | "error";
+
+export type AutoEqScope = "track" | "album";
 
 export interface DynamicsSettings {
   mode: DynamicsMode;
@@ -28,6 +34,12 @@ export interface HifiState {
   dynamics: DynamicsSettings;
   loudnessNorm: boolean; // RMS-based loudness normalization toward ~-19 dBFS
   miniViz: boolean; // compact spectrum in the player bar
+  // ---- agent Auto-EQ -------------------------------------------------------
+  autoEq: boolean; // agent analyzes the track/album and tunes the DSP
+  autoEqScope: AutoEqScope; // what the agent analyzes: the track or its album
+  agentProfile: AgentSoundProfile | null; // last profile applied by the agent (runtime)
+  agentOverridden: boolean; // user touched a control after the agent applied (runtime)
+  agentStatus: AgentEqStatus; // idle | analyzing | error (runtime)
   setEnabled: (v: boolean) => void;
   setPreamp: (v: number) => void;
   setBandGain: (band: number, gain: number) => void;
@@ -39,6 +51,11 @@ export interface HifiState {
   setDynamics: (patch: Partial<DynamicsSettings>) => void;
   setLoudnessNorm: (v: boolean) => void;
   setMiniViz: (v: boolean) => void;
+  setAutoEq: (v: boolean) => void;
+  setAutoEqScope: (v: AutoEqScope) => void;
+  applyAgentProfile: (p: AgentSoundProfile) => void;
+  clearAgentProfile: () => void;
+  setAgentStatus: (s: AgentEqStatus) => void;
   resetAll: () => void;
 }
 
@@ -66,22 +83,28 @@ export const useHifiStore = create<HifiState>()(
       dynamics: DEFAULT_DYNAMICS,
       loudnessNorm: false,
       miniViz: false,
+      autoEq: true,
+      autoEqScope: "album",
+      agentProfile: null,
+      agentOverridden: false,
+      agentStatus: "idle",
       setEnabled: (v) => set({ enabled: v }),
-      setPreamp: (v) => set({ preamp: Math.max(-12, Math.min(12, v)) }),
+      setPreamp: (v) => set((s) => ({ preamp: Math.max(-12, Math.min(12, v)), agentOverridden: s.agentProfile ? true : s.agentOverridden })),
       setBandGain: (band, gain) =>
         set((s) => {
           const eqGains = [...s.eqGains];
           eqGains[band] = Math.max(-12, Math.min(12, gain));
-          return { eqGains, eqPreset: "custom" as const };
+          return { eqGains, eqPreset: "custom" as const, agentOverridden: s.agentProfile ? true : s.agentOverridden };
         }),
-      setEqGains: (gains) => set({ eqGains: gains }),
-      applyPreset: (id) => set({ eqGains: eqPresetGains(id), eqPreset: id }),
-      setCrossfeed: (v) => set({ crossfeed: Math.max(0, Math.min(1, v)) }),
-      setStereoWidth: (v) => set({ stereoWidth: Math.max(0, Math.min(2, v)) }),
-      setBalance: (v) => set({ balance: Math.max(-1, Math.min(1, v)) }),
+      setEqGains: (gains) => set((s) => ({ eqGains: gains, agentOverridden: s.agentProfile ? true : s.agentOverridden })),
+      applyPreset: (id) => set((s) => ({ eqGains: eqPresetGains(id), eqPreset: id, agentOverridden: s.agentProfile ? true : s.agentOverridden })),
+      setCrossfeed: (v) => set((s) => ({ crossfeed: Math.max(0, Math.min(1, v)), agentOverridden: s.agentProfile ? true : s.agentOverridden })),
+      setStereoWidth: (v) => set((s) => ({ stereoWidth: Math.max(0, Math.min(2, v)), agentOverridden: s.agentProfile ? true : s.agentOverridden })),
+      setBalance: (v) => set({ balance: Math.max(-1, Math.min(1, v)) }), // balance is hardware/user territory — never flags override
       setDynamics: (patch) =>
         set((s) => {
           const dynamics = { ...s.dynamics, ...patch };
+          const agentOverridden = s.agentProfile ? true : s.agentOverridden;
           if (patch.mode && patch.mode !== "custom") {
             // mode chips load a full studio starting point
             const preset: Record<Exclude<DynamicsMode, "custom" | "off">, DynamicsSettings> = {
@@ -89,13 +112,30 @@ export const useHifiStore = create<HifiState>()(
               night: { mode: "night", threshold: -28, ratio: 6, attack: 0.012, release: 0.28, makeup: 4 },
               club: { mode: "club", threshold: -18, ratio: 4, attack: 0.008, release: 0.18, makeup: 2.5 },
             };
-            if (patch.mode === "off") return { dynamics: { ...DEFAULT_DYNAMICS, mode: "off" } };
-            return { dynamics: preset[patch.mode] };
+            if (patch.mode === "off") return { dynamics: { ...DEFAULT_DYNAMICS, mode: "off" }, agentOverridden };
+            return { dynamics: preset[patch.mode], agentOverridden };
           }
-          return { dynamics };
+          return { dynamics, agentOverridden };
         }),
-      setLoudnessNorm: (v) => set({ loudnessNorm: v }),
+      setLoudnessNorm: (v) => set((s) => ({ loudnessNorm: v, agentOverridden: s.agentProfile ? true : s.agentOverridden })),
       setMiniViz: (v) => set({ miniViz: v }),
+      setAutoEq: (v) => set(v ? { autoEq: true } : { autoEq: false, agentProfile: null, agentOverridden: false, agentStatus: "idle" }),
+      setAutoEqScope: (v) => set({ autoEqScope: v }),
+      applyAgentProfile: (p) =>
+        set({
+          eqGains: p.gains.map((g) => Math.max(-12, Math.min(12, g))),
+          eqPreset: "custom" as const,
+          preamp: Math.max(-12, Math.min(12, p.preamp ?? 0)),
+          crossfeed: Math.max(0, Math.min(1, p.crossfeed ?? 0)),
+          stereoWidth: Math.max(0, Math.min(2, p.stereoWidth ?? 1)),
+          dynamics: { ...p.dynamics },
+          loudnessNorm: !!p.loudnessNorm,
+          agentProfile: p,
+          agentOverridden: false,
+          agentStatus: "idle",
+        }),
+      clearAgentProfile: () => set({ agentProfile: null, agentOverridden: false, agentStatus: "idle" }),
+      setAgentStatus: (st) => set({ agentStatus: st }),
       resetAll: () =>
         set({
           enabled: true,
@@ -107,11 +147,30 @@ export const useHifiStore = create<HifiState>()(
           balance: 0,
           dynamics: DEFAULT_DYNAMICS,
           loudnessNorm: false,
+          agentProfile: null,
+          agentOverridden: false,
+          agentStatus: "idle",
         }),
     }),
     {
       name: "feishin-hifi",
       storage: createJSONStorage(() => localStorage),
+      // persist user preferences only — agent runtime state (last profile,
+      // override flag, status) is deliberately session-local
+      partialize: (s) => ({
+        enabled: s.enabled,
+        preamp: s.preamp,
+        eqGains: s.eqGains,
+        eqPreset: s.eqPreset,
+        crossfeed: s.crossfeed,
+        stereoWidth: s.stereoWidth,
+        balance: s.balance,
+        dynamics: s.dynamics,
+        loudnessNorm: s.loudnessNorm,
+        miniViz: s.miniViz,
+        autoEq: s.autoEq,
+        autoEqScope: s.autoEqScope,
+      }),
     },
   ),
 );

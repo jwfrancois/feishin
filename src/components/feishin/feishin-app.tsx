@@ -9,6 +9,7 @@ import { Toaster } from "sonner";
 import { AudioEngine } from "./player/audio-engine";
 import { PlayerBar } from "./player/player-bar";
 import { HifiPanel } from "./player/hifi/hifi-panel";
+import { AgentAutoEq } from "./player/hifi/agent-auto-eq";
 import { Sidebar } from "./sidebar";
 import { RightQueuePanel } from "./layout/right-queue";
 import { Hotkeys } from "./hotkeys";
@@ -179,6 +180,7 @@ export default function FeishinApp() {
       <>
         <LoginView />
         <AudioEngine />
+        <AgentAutoEq />
         <Toaster position="bottom-right" theme="dark" />
       </>
     );
@@ -189,6 +191,7 @@ export default function FeishinApp() {
       <>
         <ConnectingScreen status={status} />
         <AudioEngine />
+        <AgentAutoEq />
         <Toaster position="bottom-right" theme="dark" />
       </>
     );
@@ -197,6 +200,7 @@ export default function FeishinApp() {
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-[var(--bg)]" data-testid="app-shell">
       <AudioEngine />
+        <AgentAutoEq />
       <Hotkeys searchInputRef={searchInputRef} />
       <div className="flex min-h-0 flex-1">
         <Sidebar />

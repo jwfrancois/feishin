@@ -4,7 +4,7 @@
 // 10-band graphic EQ with presets, headphone crossfeed, stereo width, balance,
 // dynamics compressor, loudness normalization. All changes apply live.
 import { useEffect, useState } from "react";
-import { Power, RotateCcw, AudioWaveform } from "lucide-react";
+import { Power, RotateCcw, AudioWaveform, Sparkles, Loader2, BadgeCheck, Undo2 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { hifiEngine, type HifiOutputInfo } from "@/lib/audio/hifi-engine";
 import { useHifiStore, useHifiUi } from "@/store/hifi-store";
 import { EQ_BANDS, EQ_PRESETS, EQ_MIN_DB, EQ_MAX_DB } from "@/lib/audio/eq-presets";
+import { reanalyzeCurrentProfile } from "./agent-auto-eq";
 import { HifiVisualizer } from "./hifi-visualizer";
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -134,6 +135,110 @@ export function HifiPanel() {
         <div className="h-[150px] shrink-0 overflow-hidden rounded-md border border-[var(--border)] bg-black/30" data-testid="hifi-visualizer">
           <HifiVisualizer variant="panel" />
         </div>
+
+        {/* agent auto-eq */}
+        <Section title="Agent Auto-EQ" hint="cloud listening analysis">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Sparkles size={14} className={s.autoEq ? "text-[var(--primary)]" : "text-[var(--fg-dim)]"} />
+              <div>
+                <div className="text-[12px] text-[var(--fg)]">Let the agent tune the sound</div>
+                <div className="text-[11px] text-[var(--fg-dim)]">
+                  Analyzes the {s.autoEqScope === "album" ? "album" : "track"} (genres + internet tags) and shapes EQ, imaging and dynamics to match
+                </div>
+              </div>
+            </div>
+            <Switch checked={s.autoEq} onCheckedChange={s.setAutoEq} aria-label="Agent Auto-EQ" data-testid="hifi-autoeq-switch" />
+          </div>
+
+          {s.autoEq ? (
+            <>
+              <div className="mb-3 flex items-center gap-1.5">
+                <span className="text-[11px] text-[var(--fg-dim)]">Analyze:</span>
+                {([
+                  { id: "track", label: "Each track" },
+                  { id: "album", label: "Whole album" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => s.setAutoEqScope(opt.id)}
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors",
+                      s.autoEqScope === opt.id
+                        ? "border-[var(--primary)] bg-[var(--primary)]/15 text-[var(--primary)]"
+                        : "border-[var(--border)] text-[var(--fg-dim)] hover:bg-[var(--hover)] hover:text-[var(--fg)]",
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {s.agentStatus === "analyzing" && !s.agentProfile ? (
+                <div className="flex items-center gap-2 rounded border border-[var(--border)] px-3 py-2.5 text-[12px] text-[var(--fg-dim)]" data-testid="hifi-agent-analyzing">
+                  <Loader2 size={13} className="animate-spin" /> Agent is listening to this {s.autoEqScope}…
+                </div>
+              ) : s.agentProfile ? (
+                <div className="rounded border border-[var(--border)] bg-black/20 p-3" data-testid="hifi-agent-profile">
+                  <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--fg)]">
+                      <BadgeCheck size={14} className="text-[var(--primary)]" />
+                      {s.agentProfile.name}
+                      <span className="rounded bg-[var(--primary)]/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-[var(--primary)]">
+                        {Math.round(s.agentProfile.confidence * 100)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        title="Ask the agent to re-analyze now"
+                        onClick={() => void reanalyzeCurrentProfile()}
+                        className="flex items-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--fg-dim)] hover:bg-[var(--hover)] hover:text-[var(--fg)]"
+                        data-testid="hifi-agent-reanalyze"
+                      >
+                        <RotateCcw size={11} /> Re-analyze
+                      </button>
+                      <button
+                        type="button"
+                        title="Drop the agent profile (until the next track)"
+                        onClick={s.clearAgentProfile}
+                        className="flex items-center gap-1 rounded border border-[var(--border)] px-2 py-1 text-[11px] text-[var(--fg-dim)] hover:bg-[var(--hover)] hover:text-[var(--fg)]"
+                      >
+                        <Undo2 size={11} /> Clear
+                      </button>
+                    </div>
+                  </div>
+                  {s.agentProfile.tags.length > 0 ? (
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      {s.agentProfile.tags.slice(0, 8).map((t, i) => (
+                        <span key={`${t.tag}-${i}`} className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--fg-dim)]">
+                          {t.tag}
+                          <span className="ml-1 text-[9px] opacity-70">{t.source}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p className="text-[11px] leading-relaxed text-[var(--fg-dim)]">{s.agentProfile.rationale}</p>
+                  {s.agentOverridden ? (
+                    <p className="mt-2 flex items-center gap-1 text-[11px] text-[var(--primary)]" data-testid="hifi-agent-override">
+                      <Undo2 size={11} /> Manual override active — the agent reapplies its profile on the next {s.autoEqScope === "album" ? "album" : "track"}.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded border border-[var(--border)] px-3 py-2.5 text-[12px] text-[var(--fg-dim)]">
+                  Play a track — the agent will listen, fetch genre signatures from Deezer &amp; MusicBrainz, and shape the chain automatically.
+                  {s.agentStatus === "error" ? " Last attempt failed (agent offline?) — it retries on the next track." : ""}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-[11px] text-[var(--fg-dim)]">
+              Auto-EQ is off — your manual curve stays untouched. The agent still powers bios, artwork and the internet discography.
+            </p>
+          )}
+        </Section>
 
         {/* preamp + loudness */}
         <Section title="Preamp & Loudness" hint="input stage">

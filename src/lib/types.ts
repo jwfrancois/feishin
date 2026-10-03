@@ -149,3 +149,44 @@ export type SongSort =
   | "duration"
   | "year"
   | "recentlyPlayed";
+
+// ---------------------------------------------------------------------------
+// Agent Auto-EQ — sound profile computed by the Library Agent (shared shape
+// between the server-side analyzer src/lib/agent/sound-profile.ts and the
+// client Hi-Fi studio panel / auto-EQ controller).
+// ---------------------------------------------------------------------------
+export interface AgentSoundProfile {
+  version: 1;
+  /** Display name, e.g. "Agent · Jazz" or "Agent · Neutral Reference" */
+  name: string;
+  /** Top genre class the profile leans on ("jazz", "electronic", …) */
+  topClass: string;
+  /** All matched tags with the source that provided them */
+  tags: { tag: string; source: string }[];
+  /** Source names that contributed (library · deezer · musicbrainz) */
+  sources: string[];
+  /** 10-band EQ gains in dB (ISO octave centers 31 Hz … 16 kHz) */
+  gains: number[];
+  preamp: number;
+  crossfeed: number; // 0..1
+  stereoWidth: number; // 0..2
+  balance: number; // always 0 — left to the user
+  dynamics: {
+    mode: "off" | "reference" | "night" | "club";
+    threshold: number;
+    ratio: number;
+    attack: number;
+    release: number;
+    makeup: number;
+  };
+  loudnessNorm: boolean;
+  /** 0..1 — how strongly the agent matched this item's signature */
+  confidence: number;
+  /** Human-readable "why" shown in the Hi-Fi panel */
+  rationale: string;
+  analyzedAt: string;
+  /** What was analyzed */
+  itemType: "track" | "album";
+  itemId: string;
+  itemName: string;
+}
