@@ -6,7 +6,7 @@ A faithful web rebuild of [Feishin](https://github.com/jeffvli/feishin) — the 
 
 - **Live Jellyfin integration** — home, albums, artists, tracks, genres, playlists, search and favorites all render real data from your server. No mock layer anywhere in the app.
 - **Full-featured player** — play/pause/stop, seek, shuffle, repeat (off/all/one), volume + mute, queue management ("play next" / "add later"), keyboard hotkeys (space, arrows, Ctrl+arrows for track skip).
-- **Hi-Fi Studio sound system** — a real Web Audio DSP chain: preamp, 10-band parametric EQ with 13 studio presets, headphone crossfeed, mid/side stereo width, balance, 4-mode dynamics compressor and loudness normalization — plus a canvas spectrum analyzer with L/R peak meters (see below).
+- **Hi-Fi Studio sound system** — a real Web Audio DSP chain: preamp, 10-band parametric EQ with 21 studio presets, headphone crossfeed, mid/side stereo width, balance, 4-mode dynamics compressor and loudness normalization — plus a canvas spectrum analyzer with L/R peak meters (see below).
 - **Agent Auto-EQ** — the Library Agent analyzes the playing track or album (library genres + Deezer + MusicBrainz) and adapts the sound output automatically, with a confidence score and rationale; manual control always wins (see below).
 - **Playback reporting** — play starts/progress/stops are reported back to Jellyfin so your play counts and "recently played" stay in sync.
 - **Favorites & likes** — favorite hearts and the thumbs-up like button write straight back to Jellyfin (`UserData.IsFavorite` / `UserData.Likes`).
@@ -78,7 +78,7 @@ src/
 │   │                             #   discovery, TTL cache (globalThis singletons)
 │   ├── jellyfin.ts               # client API layer: paged queries, mappers, mutations
 │   ├── audio/                    # Hi-Fi DSP: hifi-engine.ts (Web Audio chain) +
-│   │                             #   eq-presets.ts (13 studio EQ presets)
+│   │                             #   eq-presets.ts (21 studio EQ presets)
 │   ├── agent/                    # agent core: scheduler, config, jobs (health / scan),
 │   │                             #   writeback (Jellyfin write-back), sound-profile.ts
 │   │                             #   (Auto-EQ analyzer), internet sources (musicbrainz,
@@ -106,7 +106,7 @@ The player bar's waveform button (or **Settings → Playback → "Open studio"**
 | Stage | What it does |
 | --- | --- |
 | Preamp | −24…+12 dB input trim |
-| 10-band EQ | ISO-octave peaking bands (31 Hz … 16 kHz, ±12 dB) with 13 studio presets (Flat, Studio Reference, Acoustic, Bass Boost/Reduce, Classical, Dance, Electronic, Hip-Hop, Jazz, Pop, Rock, Vocal Boost) + custom curves |
+| 10-band EQ | ISO-octave peaking bands (31 Hz … 16 kHz, ±12 dB) with 21 studio presets (Flat, Studio Reference, Acoustic, Bass Boost/Reduce, Classical, Dance, Electronic, Hip-Hop, Jazz, Pop, Rock, Vocal Boost, Harman Target, Late Night, Metal, Podcast/Speech, Lo-Fi Vintage, Tube Warmth, Car Stereo, Cinema) + custom curves |
 | Crossfeed | bs2b-style headphone correction — a delayed, low-passed cross-bleed of the opposite channel |
 | Stereo width | mid/side matrix from mono (0 %) to extra-wide (150 %) |
 | Balance | StereoPanner left/right trim |
@@ -127,7 +127,7 @@ With **Agent Auto-EQ** enabled (on by default, toggle in the studio panel), the 
 
 ## Library Agent
 
-A **cloud agent** runs inside the Next.js server process (started via `src/instrumentation.ts` on boot, tick loop every 30 s) and services the media library like a manager. Its two recurring jobs:
+A **cloud agent** runs inside the Next.js server process (started via `src/instrumentation.ts` on boot, tick loop every 30 s) and services the media library like a manager. Its recurring jobs:
 
 ### 1. Enrichment — scrape the internet for what the library is missing
 
@@ -190,9 +190,22 @@ Each check reports `ok / warn / fail`, aggregated into an overall score (0–100
 
 ### Agent dashboard
 
-The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable, with per-finding server write-back), recent-run logs, and settings. Settings include scan frequency & batch size (numeric fields **plus quick preset chips** — 10/15/30/45/60/120 min, 8/16/32/64 items; changes apply within ~30 s), the write-back mode, per-source toggles, and pause/resume. Manual "Health check" / "Scan library" triggers are available from the header.
+The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable, with per-finding server write-back), recent-run logs, and settings. Settings include scan frequency & batch size (numeric fields **plus quick preset chips** — 10/15/30/45/60/120 min, 8/16/32/64 items; changes apply within ~30 s), the write-back mode, per-source toggles, and pause/resume. Manual triggers live in the header: **Health check**, **Scan library**, **Audit** and **Releases**.
 
-REST endpoints: `GET /api/agent/status`, `POST /api/agent/run`, `GET /api/agent/findings`, `POST /api/agent/findings/[id]/apply`, `GET|POST /api/agent/writeback` (batch body: `{"limit": 100}`), `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`, `GET /api/agent/discography/[artistId]?name=…&fetch=1`, `GET /api/agent/sound-profile/[itemId]?itemType=track|album&…`.
+### 4. Library audit — quality control (hourly rolling sweep)
+
+Every hour (and on demand via the header **Audit** button) the agent audits a rolling window of the song library — a few thousand tracks per run, in name order, so even six-figure libraries get a full pass every few days without hammering the server. Two kinds of problems are reported as in-app findings:
+
+- **Duplicates** — songs with the same normalized title + album artist appearing more than once (re-rips, deluxe-edition leftovers, lossy + lossless copies of the same album). Each finding lists every copy with its album, year and bitrate so you can decide which one to keep.
+- **Low quality** — sources below 176 kbps (128 kbps MP3 rips, voice-quality AAC, …), worst first. In a lossless-leaning library these are the tracks to re-source.
+
+Each window is audited from scratch and stale findings inside it are pruned — the list self-corrects as the sweep wraps around the library. The dashboard shows them under the **Duplicate** and **Low quality** kinds (source: "Your library").
+
+### 5. Release radar — new music you don't have yet (twice daily)
+
+Every 12 hours (and on demand via the header **Releases** button) the agent picks a random batch of library artists, looks each one up on MusicBrainz (collaboration credits like "A feat. B" are reduced to the primary artist for matching) and flags **albums/EPs released in the last two years** that are missing from your library. Findings appear under the **Release radar** kind with the artist as anchor and each missing release (title, year, type) in the row; once you add the album, the next run clears the finding automatically. Combined with the on-page "From the internet" discography section, new music surfaces instead of slipping by.
+
+REST endpoints: `GET /api/agent/status`, `POST /api/agent/run` (body `{"job": "health" | "scan" | "audit" | "releases"}`), `GET /api/agent/findings`, `POST /api/agent/findings/[id]/apply`, `GET|POST /api/agent/writeback` (batch body: `{"limit": 100}`), `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`, `GET /api/agent/discography/[artistId]?name=…&fetch=1`, `GET /api/agent/sound-profile/[itemId]?itemType=track|album&…`.
 
 ## Known limitations
 

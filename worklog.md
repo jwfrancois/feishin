@@ -311,3 +311,22 @@ Work Log:
 
 Stage Summary:
 - Project fully delivered end-to-end: app + agent + Hi-Fi studio + Docker packaging, running on the user's desktop against their Jellyfin server.
+
+---
+Task ID: 13
+Agent: main (Super Z)
+Task: More agent superpowers (library audit + release radar) and 8 new studio EQ presets
+
+Work Log:
+- EQ: 8 new studio presets in eq-presets.ts (13 -> 21): Harman Target, Late Night, Metal, Podcast/Speech, Lo-Fi Vintage, Tube Warmth, Car Stereo, Cinema — each with a reasoned 10-band curve; panel/store render them automatically (EQ_PRESETS is mapped directly).
+- New agent job "audit" (jobs/audit.ts): rolling-window QC sweep — pages of 500 songs in SortName order, 6 pages/run (~3k songs) with 120-song boundary overlap; detects duplicate titles (normalized title+album-artist groups) and low-bitrate sources (<176 kbps), worst first; window-local stale pruning so lists self-correct as the cursor wraps. Cursor persisted as AgentConfig.auditCursor (schema + db push, Prisma client regenerated).
+- New agent job "releases" (jobs/releases.ts): release radar — 6 random artists/run, MusicBrainz release-groups (Album/EP, no live/compilation/DJ-mix) filtered to the last 24 months, diffed against per-artist library album titles (one small query per artist); flags missing releases as findings anchored to the artist, auto-clears when the album lands in the library.
+- Collaboration-credit matching: "A & B / A feat. B / A vs B / A, B" artist names reduce to the primary artist when the full name has no MB match (library is full of these; first run went 6/6 unmatched -> 2/6 unmatched, rest are genuinely obscure).
+- Scheduler: JobId union gained audit|releases; audit hourly (rolling drips), releases 12h; run route accepts all four jobs; status route exposes lastAuditRun/lastReleasesRun + running flags; run bookkeeping/Activity feed work unchanged.
+- Dashboard: KIND_META gained dupes (Copy icon), quality (Gauge), releases (Rocket); SOURCE_LABELS gained jellyfin="Your library"; header gained Audit + Releases buttons; trigger() label map; AgentStatus interface extended.
+- Scale discovery + redesign: the server hosts 119,430 songs (7,031 albums) — the original full-walk audit ran >4 min/page batches and would take hours, so it became the rolling window (3.7 min per hourly run, verified live). The releases job's initial full-library album snapshot was replaced with per-artist queries for the same reason.
+- Live verification against the real server: audit window 1 covered songs 0-3,500 — 230 duplicate titles found (cap 60 findings/run; "3 copies — DÁKITI by Bad Bunny", "3 copies — Dynamite by BTS"); releases run matched 4/6 artists with 0 missing recent albums (library up to date there). Orphaned "running" rows from interrupted deploys are now marked cancelled on restart (one-time cleanup via script).
+- tsc: 0 errors in src/; eslint clean on all touched files.
+
+Stage Summary:
+- The agent now does five jobs: enrichment, write-back, health, quality-control audit (dupes + low-bitrate), and a release radar for new music. 21 studio EQ presets ship in the Hi-Fi panel. Everything verified live against the 119k-song library.

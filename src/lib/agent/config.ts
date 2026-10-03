@@ -30,6 +30,7 @@ export interface AgentConfigData {
   sources: AgentSources;
   fanartApiKey: string;
   lastStage: "albums" | "artists";
+  auditCursor: number;
 }
 
 let configCache: { data: AgentConfigData; ts: number } | null = null;
@@ -59,6 +60,7 @@ export async function ensureConfig(): Promise<AgentConfigData> {
     sources,
     fanartApiKey: row.fanartApiKey ?? "",
     lastStage: row.lastStage === "artists" ? "artists" : "albums",
+    auditCursor: row.auditCursor ?? 0,
   };
   configCache = { data, ts: Date.now() };
   return data;
@@ -76,6 +78,7 @@ export async function updateConfig(patch: Partial<AgentConfigData>): Promise<Age
       ...(patch.writeBack !== undefined ? { writeBack: patch.writeBack === "auto" ? "auto" : patch.writeBack === "off" ? "off" : "manual" } : {}),
       ...(patch.fanartApiKey !== undefined ? { fanartApiKey: patch.fanartApiKey.trim() || null } : {}),
       ...(patch.lastStage !== undefined ? { lastStage: patch.lastStage } : {}),
+      ...(patch.auditCursor !== undefined ? { auditCursor: Math.max(0, Math.round(patch.auditCursor)) } : {}),
       ...(patch.sources !== undefined ? { sources: JSON.stringify({ ...DEFAULT_SOURCES, ...patch.sources }) } : {}),
     },
   });
@@ -95,6 +98,7 @@ export async function updateConfig(patch: Partial<AgentConfigData>): Promise<Age
     sources,
     fanartApiKey: row.fanartApiKey ?? "",
     lastStage: row.lastStage === "artists" ? "artists" : "albums",
+    auditCursor: row.auditCursor ?? 0,
   };
 }
 

@@ -22,6 +22,9 @@ import {
   HardDrive,
   Waves,
   Disc3,
+  Copy,
+  Gauge,
+  Rocket,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isWritableKind } from "@/lib/agent/writable-kinds";
@@ -64,9 +67,11 @@ interface AgentStatus {
     lastStage: string;
   };
   runtime: { startedAt: number; booted: boolean; running: string[]; lastTick: number; timerAlive: boolean };
-  running: { health: boolean; scan: boolean };
+  running: { health: boolean; scan: boolean; audit: boolean; releases: boolean };
   lastHealthRun: AgentRunRow | null;
   lastScanRun: AgentRunRow | null;
+  lastAuditRun?: AgentRunRow | null;
+  lastReleasesRun?: AgentRunRow | null;
   latestHealth: {
     id: string;
     overall: string;
@@ -117,6 +122,9 @@ const KIND_META: Record<string, { label: string; icon: React.ReactNode }> = {
   lyrics: { label: "Lyrics", icon: <Music4 size={13} /> },
   sound: { label: "Auto-EQ profile", icon: <Waves size={13} /> },
   discography: { label: "Discography", icon: <Disc3 size={13} /> },
+  dupes: { label: "Duplicate", icon: <Copy size={13} /> },
+  quality: { label: "Low quality", icon: <Gauge size={13} /> },
+  releases: { label: "Release radar", icon: <Rocket size={13} /> },
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -127,6 +135,7 @@ const SOURCE_LABELS: Record<string, string> = {
   wikipedia: "Wikipedia",
   lrclib: "LRCLIB",
   fanart: "Fanart.tv (artist photos)",
+  jellyfin: "Your library",
 };
 
 // ---------------------------------------------------------------- small pieces
@@ -250,13 +259,14 @@ export function AgentView() {
     void loadFindings();
   }, [kindFilter, loadFindings]);
 
-  const trigger = async (job: "health" | "scan") => {
+  const trigger = async (job: "health" | "scan" | "audit" | "releases") => {
     setBusy(job);
     try {
       const res = await fetch("/api/agent/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job }) });
       const data = (await res.json()) as { ok: boolean; started?: boolean; error?: string };
+      const jobLabels: Record<typeof job, string> = { health: "Health check", scan: "Library scan", audit: "Library audit", releases: "Release radar" };
       if (data.ok) {
-        toast(data.started ? `${job === "scan" ? "Library scan" : "Health check"} started` : "Job already running", { duration: 2000 });
+        toast(data.started ? `${jobLabels[job]} started` : "Job already running", { duration: 2000 });
         setTimeout(() => {
           void loadStatus();
           void loadFindings();
@@ -363,7 +373,7 @@ export function AgentView() {
 
   const cfg = status.config;
   const health = status.latestHealth;
-  const runningNow = status.running.health || status.running.scan;
+  const runningNow = status.running.health || status.running.scan || status.running.audit || status.running.releases;
   const foundArtwork = (status.findingCounts.artwork?.found ?? 0) + (status.findingCounts.artwork?.applied ?? 0);
   const foundBios = status.findingCounts.bio?.found ?? 0;
   const foundMeta = status.findingCounts.metadata?.found ?? 0;
@@ -401,6 +411,14 @@ export function AgentView() {
         <button type="button" className="fs-pill" onClick={() => void trigger("scan")} disabled={busy !== "" || status.running.scan}>
           <RefreshCw size={14} className={cn(status.running.scan && "fs-spin")} />
           Scan library
+        </button>
+        <button type="button" className="fs-pill" onClick={() => void trigger("audit")} disabled={busy !== "" || status.running.audit} title="Find duplicate tracks and low-bitrate sources">
+          <Copy size={14} className={cn(status.running.audit && "fs-spin")} />
+          Audit
+        </button>
+        <button type="button" className="fs-pill" onClick={() => void trigger("releases")} disabled={busy !== "" || status.running.releases} title="Check MusicBrainz for recent releases missing from your library">
+          <Rocket size={14} className={cn(status.running.releases && "fs-spin")} />
+          Releases
         </button>
       </div>
 

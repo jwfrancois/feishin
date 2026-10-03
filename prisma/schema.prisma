@@ -78,5 +78,6 @@ model AgentConfig {
   sources           String   @default("{}") // JSON {musicbrainz,deezer,itunes,coverart,wikipedia,lrclib,fanart}
   fanartApiKey      String? // Fanart.tv personal API key (artist photos) — or FANARTTV_API_KEY env
   lastStage         String   @default("albums") // albums | artists — alternates between runs
+  auditCursor       Int      @default(0) // rolling audit window position (songs are audited in chunks across runs)
   updatedAt         DateTime @updatedAt
 }

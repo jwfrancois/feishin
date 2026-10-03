@@ -34,7 +34,15 @@ export type EqPresetId =
   | "jazz"
   | "pop"
   | "rock"
-  | "vocal";
+  | "vocal"
+  | "harman"
+  | "latenight"
+  | "metal"
+  | "podcast"
+  | "lofi"
+  | "tube"
+  | "car"
+  | "cinema";
 
 export interface EqPreset {
   id: EqPresetId;
@@ -64,6 +72,14 @@ export const EQ_PRESETS: EqPreset[] = [
   P("pop", "Pop", "Polished V-curve for radio sheen", [-1, 0.5, 1.5, 2, 2.5, 1.5, 0.5, 1, 2, 1.5]),
   P("rock", "Rock", "Guitar bite and kick drum punch", [3.5, 3, 1.5, 0.5, -0.5, -0.5, 1, 2.5, 3, 2.5]),
   P("vocal", "Vocal Boost", "Presence lift for singers and podcasts", [-2, -1.5, -0.5, 0, 1.5, 3, 4, 3.5, 1.5, 0]),
+  P("harman", "Harman Target", "Research-backed preferred listening curve — gentle bass tilt, smooth top", [4, 3.5, 2.5, 1.5, 0.5, 0, -0.5, -1, 0.5, 2]),
+  P("latenight", "Late Night", "Equal-loudness compensation for low-volume listening — full sound at whisper level", [3, 2.5, 1, 0, 0, 0, 0, 0.5, 2, 3]),
+  P("metal", "Metal", "Scooped mids with surgical pick attack and double-kick punch", [4, 3.5, 1.5, -1, -2.5, -2, -0.5, 1.5, 3, 2.5]),
+  P("podcast", "Podcast / Speech", "Max intelligibility — cuts rumble, lifts consonants, tames sibilance", [-6, -5, -3, -1, 0.5, 2, 3.5, 3, 1, -0.5]),
+  P("lofi", "Lo-Fi Vintage", "Cassette-era roll-off — warm lows-mids, dusty highs", [2, 2.5, 1.5, 0.5, 0, -0.5, -1.5, -2.5, -4, -5]),
+  P("tube", "Tube Warmth", "Valve-amp coloration — gentle low-mid body, silk-soft top", [2.5, 3, 2.5, 1.5, 0.5, 0, -0.5, -0.5, 0, 1]),
+  P("car", "Car Stereo", "Road-noise compensation — subs and highs punch through engine hum", [4, 3.5, 2, 0.5, 0, 0, 0.5, 1.5, 2.5, 3]),
+  P("cinema", "Cinema", "Soundtrack scale — wide smile with dialogue kept front and center", [3.5, 3, 1.5, 0.5, 0, 0.5, 1, 1.5, 2.5, 3]),
 ];
 
 export function eqPresetGains(id: EqPresetId): number[] {
