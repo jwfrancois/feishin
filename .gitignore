@@ -55,3 +55,4 @@ server.log
 # runtime image cache
 /.cache/
 db/custom.db
+tool-results/
