@@ -225,8 +225,16 @@ export const usePlayerStore = create<PlayerState>()(
     }),
     {
       name: "feishin-player",
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => localStorage),
+      // v3: drop persisted queue/currentIndex — older builds could persist song objects
+      // with broken stream URLs (mock-era or interim formats) that broke playback
+      migrate: (persisted) => ({
+        ...(persisted as Record<string, unknown>),
+        queue: [],
+        currentIndex: 0,
+        isPlaying: false,
+      }),
       partialize: (s) => ({
         queue: s.queue,
         currentIndex: s.currentIndex,

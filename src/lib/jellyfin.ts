@@ -27,8 +27,10 @@ export async function jf<T = unknown>(path: string, params?: Record<string, stri
   return res.json() as Promise<T>;
 }
 
-export const jfImageUrl = (itemId: string, tag?: string, maxWidth = 300): string =>
-  `/api/jf-img/${itemId}?maxWidth=${maxWidth}${tag ? `&tag=${tag}` : ""}`;
+export const jfImageUrl = (itemId: string, tag?: string, maxWidth = 300, name?: string): string =>
+  `/api/jf-img/${itemId}?maxWidth=${maxWidth}${tag ? `&tag=${tag}` : ""}${
+    name ? `&name=${encodeURIComponent(name.slice(0, 80))}` : ""
+  }`;
 
 export const jfAudioUrl = (itemId: string): string => `/api/jf-audio/${itemId}`;
 
@@ -77,7 +79,7 @@ export function mapAlbum(item: JfItem): Album {
     artistName: item.AlbumArtists?.[0]?.Name ?? item.AlbumArtist ?? item.Artists?.[0] ?? "Unknown artist",
     year: yearOf(item),
     genre: item.Genres?.[0] ?? "",
-    coverUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 300),
+    coverUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 300, item.Name),
     coverTag: item.ImageTags?.Primary,
     color: [70, 78, 96],
     trackIds: [],
@@ -99,7 +101,7 @@ export function mapSong(item: JfItem): Song {
     artistId: item.AlbumArtists?.[0]?.Id ?? item.ArtistItems?.find((a) => a.Name === artistName)?.Id,
     album: item.Album ?? "",
     albumId: item.AlbumId,
-    albumCoverUrl: item.AlbumId ? jfImageUrl(item.AlbumId, undefined, 300) : undefined,
+    albumCoverUrl: item.AlbumId ? jfImageUrl(item.AlbumId, undefined, 300, item.Album) : undefined,
     duration: (item.RunTimeTicks ?? 0) / 1e7,
     trackNumber: item.IndexNumber,
     year: yearOf(item),
@@ -117,7 +119,8 @@ export function mapArtist(item: JfItem): Artist {
     id: item.Id,
     name: item.Name ?? "Unknown artist",
     genre: item.Genres?.[0] ?? "",
-    imageUrl: item.ImageTags?.Primary ? jfImageUrl(item.Id, item.ImageTags.Primary, 400) : "",
+    // always request — the proxy renders an initials placeholder when the item has no image
+    imageUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 400, item.Name),
     color: [60, 64, 80],
     overview: item.Overview,
     likes: item.UserData?.Likes ?? null,
@@ -129,7 +132,7 @@ export function mapPlaylist(item: JfItem): Playlist {
     id: item.Id,
     name: item.Name ?? "Untitled playlist",
     trackCount: item.ChildCount ?? 0,
-    coverUrl: item.ImageTags?.Primary ? jfImageUrl(item.Id, item.ImageTags.Primary, 300) : "",
+    coverUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 300, item.Name),
     color: [70, 78, 96],
     duration: (item.RunTimeTicks ?? 0) / 1e7,
   };
@@ -457,7 +460,10 @@ export async function getSystemInfo(): Promise<{ ServerName?: string; Version?: 
 export type PlaybackAction = "start" | "progress" | "stop";
 
 export async function reportPlayback(action: PlaybackAction, itemId: string, positionSec: number, isPaused: boolean): Promise<void> {
-  const path = action === "start" ? "Sessions/Playing/Started" : action === "progress" ? "Sessions/Playing/Progress" : "Sessions/Playing/Stopped";
+  // Jellyfin routes: start -> POST /Sessions/Playing, progress -> /Sessions/Playing/Progress,
+  // stop -> /Sessions/Playing/Stopped. ("/Sessions/Playing/Started" is an Emby-legacy path
+  // that does not exist in Jellyfin — it 404s and our proxy surfaced it as a 502.)
+  const path = action === "start" ? "Sessions/Playing" : action === "progress" ? "Sessions/Playing/Progress" : "Sessions/Playing/Stopped";
   try {
     await jfPost(path, {}, {
       ItemId: itemId,

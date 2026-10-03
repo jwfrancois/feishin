@@ -99,3 +99,27 @@ Stage Summary:
 - All UI now reflects real server state: favorites, likes, playcounts, playlists; no fake/hardcoded values remain in views.
 - README.md added; credentials overridable via env vars.
 - Ready to commit + push to github.com/jwfrancois/feishin.
+
+---
+Task ID: 4
+Agent: main (Super Z)
+Task: Fix Jellyfin media-proxy errors from user's console log (image 404s, Started 502, audio 404/500, bare-ID request)
+
+Work Log:
+- Diagnosed each error against the live server:
+  - /api/jf-img 404s: two causes — (a) items with no Primary ImageTag (client still requested), (b) items on unmounted share /mnt1/unraid_share whose extracted art can't be served (upstream 404 passthrough).
+  - /api/jf/Sessions/Playing/Started 502: route does not exist in Jellyfin (Emby-legacy path); confirmed vs upstream Feishin source (sessions/playing, /progress, /stopped) and live probes (Playing 204, Progress 400 without session, Stopped 204, Started 404).
+  - /api/jf-audio 404 + universal 500: media share still unmounted server-side; universal transcode spins ffmpeg only to fail.
+  - bare-ID request /{itemId} 404+500: stale persisted queue entries (interim audioUrl format) + no URL sanitization in audio-engine.
+- Fixes:
+  - jellyfin.ts reportPlayback: start -> POST /Sessions/Playing (progress/stop routes already correct); verified full flow 204/204/204 with session token via curl script (scripts/test-jf-session-flow.sh).
+  - jf-img proxy: on upstream !ok return deterministic SVG placeholder (gradient hues from id hash + initials from name param), 200 with short browser cache, NOT disk-cached so real art returns automatically after server fix.
+  - jfImageUrl now takes item name; mapAlbum/mapSong/mapArtist/mapPlaylist pass names; tagless artists/playlists now render initials tiles too.
+  - audio-engine: URL sanitizer (must start with / or http) — stale bare-id entries toast+skip instead of hitting app root; on error HEAD-probe the stream first so missing files skip immediately without the pointless universal transcode; handleUnavailable reports stop, toasts once per track, auto-advances, pauses after 3 consecutive failures; onPlaying resets failure streak.
+  - player-store persist v2 -> v3 with migrate() that clears queue/currentIndex (purges stale song objects in existing browsers).
+- Verified: tsc src/ clean; curl — placeholder 200 image/svg+xml for tagless + unmounted-share albums, real art still 200 image/jpeg, /Sessions/Playing + /Progress via proxy 200; agent-browser e2e — home renders real data with TB/initials tiles, Nelly Furtado album (/mnt/nas_share, mounted) plays with seek (position 17.9s), title format exact, playback reports (Playing/Progress/Stopped) all 200, all 52 image requests 200, zero page errors; Eraser (unmounted) skips gracefully via HEAD probe, no universal 500.
+- Discovery: /mnt/nas_share/Media IS mounted and streams (audio/flac 200); /mnt1/unraid_share/Music remains unmounted server-side (user should remount to restore that portion + its art).
+
+Stage Summary:
+- All console-noise sources from the user's log eliminated: no more Started 502, no image 404 storms, no bare-ID requests, no wasteful universal 500s; unavailable tracks degrade gracefully with toasts.
+- README.md known-limitations section updated to match new behavior.

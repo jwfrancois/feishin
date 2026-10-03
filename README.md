@@ -64,7 +64,8 @@ src/
 
 ## Known limitations
 
-- **Audio playback depends on the server's media share.** If the Jellyfin server's music folder is unmounted, audio files 404 and playback falls back to a transcode request before surfacing an error toast. The audio pipeline itself (Range passthrough + transcode fallback) is proven; it will work the moment the share is available.
+- **Audio playback depends on the server's media share.** If a track's file can't be read by the Jellyfin server (unmounted music folder), the app detects the missing file, shows a "Skipped — unavailable on server" toast and auto-advances; after three consecutive failures it pauses to avoid churning through the queue. Fully readable shares stream and seek normally.
+- **Image-less items get generated placeholders.** Items without embedded/folder art (and items whose art lives on an offline share) are rendered as deterministic gradient initials tiles by the image proxy instead of broken images.
 - **Star ratings are hidden on Jellyfin.** Jellyfin 10.11 removed the numeric 0–10 rating API (only like/dislike remains), and upstream Feishin shows star ratings for Navidrome/Subsonic only. This rebuild follows suit and uses Jellyfin's native like (`UserData.Likes`) instead.
 - **Genre counts** — Jellyfin 10.11's `/Genres` endpoint no longer exposes `ItemCount` and facets are ignored, so genre stripes show names only.
 - **Lyrics** are shown only for tracks that have lyrics files on the server.

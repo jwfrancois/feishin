@@ -14,6 +14,7 @@ export function AudioEngine() {
   const reportedRef = useRef<string | null>(null);
   const lastProgressRef = useRef(0);
   const retriedRef = useRef<Set<string>>(new Set());
+  const failedStreakRef = useRef(0);
   const stateRef = useRef({ queue: [] as typeof queue, currentIndex: 0, repeat: "off" as ReturnType<typeof usePlayerStore.getState>["repeat"], isPlaying: false });
 
   const queue = usePlayerStore((s) => s.queue);
@@ -31,6 +32,27 @@ export function AudioEngine() {
 
   const currentSong = queue[currentIndex];
 
+  // A track the server cannot serve (missing file / stale queue entry). Report stop,
+  // toast once per track, then move on — but stop after 3 consecutive failures so a
+  // fully-offline library doesn't churn through the queue.
+  const handleUnavailable = (song: NonNullable<typeof currentSong>) => {
+    reportPlayback("stop", song.id, 0, true).catch(() => {});
+    failedStreakRef.current += 1;
+    const paused = failedStreakRef.current >= 3;
+    toast.error(`Skipped "${song.name}" — unavailable on server`, {
+      id: `audio-fail-${song.id}`,
+      description: paused
+        ? "Several tracks in a row are unreadable. Playback paused — the server's media folder may be offline."
+        : "The server couldn't read this audio file (media share offline or unsupported codec). Trying the next track.",
+    });
+    if (paused) {
+      usePlayerStore.getState().pause();
+      failedStreakRef.current = 0;
+      return;
+    }
+    setTimeout(() => usePlayerStore.getState().next(), 250);
+  };
+
   // load + play/pause on song change
   useEffect(() => {
     const audio = audioRef.current;
@@ -38,11 +60,20 @@ export function AudioEngine() {
     if (audio.dataset.songId !== currentSong.id) {
       audio.dataset.songId = currentSong.id;
       audio.dataset.fallbackTried = "";
-      audio.src = currentSong.audioUrl ?? "";
-      audio.currentTime = 0;
       scrobbledRef.current.delete(currentSong.id);
       reportedRef.current = null;
       usePlayerStore.getState().setPosition(0);
+      // sanitize the stream URL: stale persisted-queue entries (older builds) may carry
+      // a bare item id instead of a path — requesting them would hit the app root
+      const url = currentSong.audioUrl ?? "";
+      if (url.startsWith("/") || /^https?:\/\//.test(url)) {
+        audio.src = url;
+        audio.currentTime = 0;
+      } else {
+        audio.removeAttribute("src");
+        handleUnavailable(currentSong);
+        return;
+      }
     }
     if (isPlaying) {
       audio.play().catch(() => {
@@ -51,6 +82,7 @@ export function AudioEngine() {
     } else {
       audio.pause();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong, isPlaying]);
 
   // volume
@@ -142,22 +174,33 @@ export function AudioEngine() {
           s.next();
         }
       }}
+      onPlaying={() => {
+        // playback actually started — this track is fine, reset the failure streak
+        failedStreakRef.current = 0;
+      }}
       onError={() => {
         const audio = audioRef.current;
+        const song = usePlayerStore.getState().queue[usePlayerStore.getState().currentIndex];
         const songId = audio?.dataset.songId;
-        // direct play failed (unsupported codec?) — retry once via server transcode
-        if (audio && songId && !audio.dataset.fallbackTried && currentSong) {
+        if (!audio || !song || songId !== song.id) return;
+        // direct play failed — if the file is simply missing, transcoding can't help either;
+        // probe once and skip, otherwise retry via server transcode (codec issue)
+        if (!audio.dataset.fallbackTried) {
           audio.dataset.fallbackTried = "1";
-          audio.src = `/api/jf-audio/${songId}?mode=universal`;
-          audio.currentTime = 0;
-          audio.play().catch(() => {});
+          fetch(`/api/jf-audio/${songId}`, { method: "HEAD" })
+            .then((probe) => {
+              if (probe.status === 404) {
+                handleUnavailable(song);
+                return;
+              }
+              audio.src = `/api/jf-audio/${songId}?mode=universal`;
+              audio.currentTime = 0;
+              audio.play().catch(() => {});
+            })
+            .catch(() => handleUnavailable(song));
           return;
         }
-        if (currentSong) {
-          toast.error(`Failed to load "${currentSong.name}"`, {
-            description: "The server may be unable to read this audio file right now (media share offline or unsupported codec).",
-          });
-        }
+        handleUnavailable(song);
       }}
     />
   );

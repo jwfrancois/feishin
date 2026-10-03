@@ -83,7 +83,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
     const upstream = await withSlot(() => jfFetch(`Items/${id}/Images/Primary`, { params }));
     if (!upstream.ok) {
-      return NextResponse.json({ error: `Image ${upstream.status}` }, { status: upstream.status });
+      // The item has no Primary image (or the server can't read its media share right now).
+      // Serve a deterministic initials tile instead of a raw 404: keeps the browser console
+      // clean and matches how feishin/Jellyfin render image-less items.
+      return imagePlaceholder(id, sp.get("name"));
     }
 
     const buf = Buffer.from(await upstream.arrayBuffer());
@@ -108,6 +111,41 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     void getConnectionRaw; // keep import tree-shake-safe
     return NextResponse.json({ error: err instanceof Error ? err.message : "Image proxy failed" }, { status: 502 });
   }
+}
+
+/** Deterministic gradient + initials tile for items without a servable image. */
+function imagePlaceholder(id: string, rawName: string | null): Response {
+  // initials: first alphanumeric char of up to two words
+  const words = (rawName ?? "")
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}]/gu, ""))
+    .filter(Boolean);
+  let initials = words
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("");
+  if (!initials) initials = id.slice(0, 2).toUpperCase();
+
+  // deterministic hues from the item id
+  const h1 = parseInt(id.slice(0, 4), 16) % 360;
+  const h2 = (h1 + 40 + (parseInt(id.slice(4, 8), 16) % 80)) % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">` +
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="hsl(${h1},32%,26%)"/>` +
+    `<stop offset="1" stop-color="hsl(${h2},38%,14%)"/></linearGradient></defs>` +
+    `<rect width="300" height="300" fill="url(#g)"/>` +
+    `<text x="150" y="150" text-anchor="middle" dominant-baseline="central" ` +
+    `font-family="Arial, Helvetica, sans-serif" font-size="96" font-weight="700" ` +
+    `fill="rgba(255,255,255,0.42)">${initials}</text></svg>`;
+
+  return new Response(svg, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/svg+xml; charset=utf-8",
+      // short-lived: real art should replace the tile once the server can serve it
+      "Cache-Control": "public, max-age=300, stale-while-revalidate=3600",
+    },
+  });
 }
 
 function sniffContentType(buf: Buffer): string {
