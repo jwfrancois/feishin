@@ -20,8 +20,11 @@ import {
   Play,
   CloudUpload,
   HardDrive,
+  Waves,
+  Disc3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isWritableKind } from "@/lib/agent/writable-kinds";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 
@@ -112,6 +115,8 @@ const KIND_META: Record<string, { label: string; icon: React.ReactNode }> = {
   bio: { label: "Biography", icon: <BookOpenText size={13} /> },
   metadata: { label: "Metadata", icon: <Database size={13} /> },
   lyrics: { label: "Lyrics", icon: <Music4 size={13} /> },
+  sound: { label: "Auto-EQ profile", icon: <Waves size={13} /> },
+  discography: { label: "Discography", icon: <Disc3 size={13} /> },
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -579,7 +584,7 @@ export function AgentView() {
                 </thead>
                 <tbody>
                   {findings.map((f) => {
-                    const writable = (f.status === "found" || f.status === "applied") && f.serverStatus !== "synced";
+                    const writable = (f.status === "found" || f.status === "applied") && f.serverStatus !== "synced" && isWritableKind(f.kind);
                     return (
                       <tr key={f.id} className="border-t border-[var(--border)]">
                         <td className="max-w-[200px] px-2 py-2">

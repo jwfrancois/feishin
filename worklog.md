@@ -251,3 +251,21 @@ Verification (agent-browser, real playback via Jellyfin):
 
 Stage Summary:
 - The player now listens back: the Library Agent analyzes each track or album (library genres + Deezer + MusicBrainz), distills a genre-signature into a full Hi-Fi DSP profile and applies it live — with confidence, matched tags and a human-readable rationale in the Hi-Fi Studio panel. Auto-EQ is on by default, scoped per album (switchable per track), robust to rate-limited sources (pending-retry cache), and always yields to manual control while re-engaging on the next item.
+
+---
+Task ID: 11
+Agent: main (Super Z)
+Task: README refresh (Hi-Fi Studio + Agent Auto-EQ) + finish the metadata write-back task (batch kind filter + live backlog sync)
+
+Work Log:
+- Write-back audit: found the batch (applyBatchToJellyfin) selected ALL found/not-synced findings, including "sound" (Auto-EQ profiles) and "discography" kinds that have no Jellyfin writer — 11 of 25 batch slots were wasted per run and counted as "failed". Also the dashboard showed "write" buttons on those rows (click -> "no writer" toast).
+- New src/lib/agent/writable-kinds.ts: shared WRITABLE_KINDS = [bio, artwork, metadata, lyrics] + isWritableKind(), imported by both server (writeback.ts) and client (agent.tsx) so they can never drift.
+- writeback.ts: batch query now filters kind to WRITABLE_KINDS (still overridable via body kind); single-apply returns an honest "in-app knowledge only — not written to Jellyfin" for non-writable kinds.
+- agent.tsx: write buttons gated by isWritableKind(); KIND_META gained sound ("Auto-EQ profile", Waves icon) and discography ("Discography", Disc3 icon) — they also appear as filter chips now.
+- LIVE batch run against the real Jellyfin server (limit 100, ~6.5 min): bios 38->76 synced, metadata 5->10 synced, lyrics 1->5 synced, artwork +1 synced; remaining artwork failures are ALL the unmounted /mnt1/unraid_share (HTTP 500, retried automatically after remount); sound/discography findings left untouched (serverStatus none) — zero "no writer" failures.
+- README.md refresh: new "Hi-Fi Studio sound system" section (signal chain diagram, stage table, presets, spectrum/meters, bypass) + "Agent Auto-EQ" subsection (tag layers/weights, 13 genre signatures, accents, pre-1995 heuristic, confidence/rationale, scope, manual override, endpoint + pending-retry cache); Features gained Hi-Fi + Auto-EQ bullets; architecture tree gained lib/audio/, agent writeback/sound-profile, hifi store/panel; REST endpoints list gained /api/agent/sound-profile/[itemId] and /api/agent/discography/[artistId] + batch body; Known limitations gained "Auto-EQ is stylistic, not room correction".
+- MultiEdit partial-application gotcha: the editor applied earlier edits of a failed batch (non-atomic in practice), duplicating two feature bullets and the whole Hi-Fi section; repaired precisely with scripts/fix-readme.py (assertions + dedupe), verified 1 copy of each.
+- tsc: 0 errors in src/; eslint clean on touched files.
+
+Stage Summary:
+- Write-back batch is now precise (only server-writable kinds), the dashboard only offers write where it works, and the entire writable backlog is ON the Jellyfin server (76 artist bios, 10 year/genre writes, 5 lyrics, 2 artwork) — artwork for the dead share self-heals after remount. README now documents the full player incl. the studio DSP and agent-driven Auto-EQ.

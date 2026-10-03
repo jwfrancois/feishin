@@ -11,6 +11,7 @@
 import { db } from "@/lib/db";
 import { jfJson, jfFetch, jfRaw, invalidateJfCache, type JfFetchOptions } from "@/lib/jf-server";
 import { agentFetch } from "./http";
+import { WRITABLE_KINDS, isWritableKind } from "./writable-kinds";
 
 interface FindingRow {
   id: string;
@@ -180,7 +181,17 @@ export async function applyFindingToJellyfin(findingId: string): Promise<ApplyRe
     return { findingId: f.id, item: label, kind: f.kind, ok: true, detail: "already synced to Jellyfin" };
   }
   const writer = WRITERS[f.kind];
-  if (!writer) return { findingId: f.id, item: label, kind: f.kind, ok: false, detail: `no writer for kind "${f.kind}"` };
+  if (!writer) {
+    return {
+      findingId: f.id,
+      item: label,
+      kind: f.kind,
+      ok: false,
+      detail: isWritableKind(f.kind)
+        ? `no writer registered for kind "${f.kind}"`
+        : `"${f.kind}" is in-app knowledge only — not written to Jellyfin`,
+    };
+  }
   try {
     const detail = await writer(f);
     const applied = detail !== "skipped — server already has an overview" &&
@@ -226,7 +237,10 @@ export async function applyBatchToJellyfin(opts: { limit?: number; kind?: string
       where: {
         status: { in: ["found", "applied"] },
         serverStatus: { not: "synced" },
-        ...(opts.kind ? { kind: opts.kind } : {}),
+        // only kinds that actually have writers — sound profiles / discography
+        // listings are in-app knowledge and would otherwise eat batch slots and
+        // be counted as "failed" every run
+        kind: opts.kind ?? { in: [...WRITABLE_KINDS] },
       },
       orderBy: { updatedAt: "desc" },
       take: limit,
