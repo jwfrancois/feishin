@@ -1,10 +1,11 @@
 "use client";
 // Feishin rebuild — right sidebar play queue (feishin's side-drawer-queue)
 import { X, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { usePlayerStore } from "@/store/player-store";
 import { useSettingsStore } from "@/store/settings-store";
 import { ItemImage } from "../shared";
-import { formatDuration } from "@/lib/library";
+import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
 import { SongContextMenuContent } from "../song-actions";

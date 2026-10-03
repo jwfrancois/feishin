@@ -1,9 +1,11 @@
 "use client";
 // Feishin rebuild — album detail route (hero header + track table, faithful to feishin album page)
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Play, SkipForward, FastForward, MoreHorizontal } from "lucide-react";
-import { rgbStr } from "@/lib/library";
-import { getAlbum, getTracksByAlbum, getArtist, trackToSong, formatLongDuration } from "@/lib/library";
+import { fetchAlbum, fetchAlbumTracks } from "@/lib/jellyfin";
+import type { Album, Song } from "@/lib/types";
+import { formatLongDuration, extractDominantColor } from "@/lib/format";
+import { useJfQuery } from "@/hooks/use-jf";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
 import { ItemImage, RatingStars, FavoriteHeart, Kebab } from "../shared";
@@ -12,28 +14,54 @@ import { useSongActions } from "../song-actions";
 import { DropdownMenuNS as DropdownMenu } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
+const FALLBACK_COLOR: [number, number, number] = [70, 78, 96];
+
 export function AlbumDetailView({ albumId }: { albumId: string }) {
-  const album = getAlbum(albumId);
   const navigate = useRouterStore((s) => s.navigate);
   const actions = useSongActions();
-  const fav = usePlayerStore((s) => (album ? !!s.favoriteAlbums[album.id] : false));
-  const toggleAlbumFav = usePlayerStore((s) => s.toggleAlbumFavorite);
   const currentSong = usePlayerStore((s) => s.queue[s.currentIndex]);
 
-  const songs = useMemo(() => {
-    if (!album) return [];
-    return getTracksByAlbum(album.id).map((t) => trackToSong(t, album.coverUrl));
+  const albumQ = useJfQuery(`album:${albumId}`, () => fetchAlbum(albumId), 10 * 60_000);
+  const tracksQ = useJfQuery(`album:${albumId}:tracks`, () => fetchAlbumTracks(albumId), 5 * 60_000);
+  const album = albumQ.data ?? undefined;
+  const songs: Song[] = useMemo(() => tracksQ.data ?? [], [tracksQ.data]);
+  const fav = usePlayerStore((s) => (album ? !!s.favoriteAlbums[album.id] : false));
+
+  const [color, setColor] = useState<[number, number, number]>(FALLBACK_COLOR);
+  useEffect(() => {
+    if (!album) return;
+    let cancelled = false;
+    extractDominantColor(album.coverUrl).then((c) => {
+      if (!cancelled && c) setColor(c);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [album]);
+
+  if (albumQ.loading) {
+    return (
+      <div className="px-8 pb-24 pt-8" data-testid="album-detail-loading">
+        <div className="flex items-end gap-6">
+          <div className="h-[210px] w-[210px] shrink-0 animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+          <div className="flex-1 space-y-3 pb-2">
+            <div className="h-3 w-20 animate-pulse rounded bg-[var(--elevated)]" />
+            <div className="h-10 w-2/3 animate-pulse rounded bg-[var(--elevated)]" />
+            <div className="h-3.5 w-1/3 animate-pulse rounded bg-[var(--elevated)]" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!album) {
     return <div className="p-8 text-[var(--fg-dim)]">Album not found</div>;
   }
 
-  const artist = getArtist(album.artistId);
   const isPlayingHere = currentSong && songs.some((s) => s.id === currentSong.id);
 
-  // hero background gradient from album color
-  const [r, g, b] = album.color;
+  // hero background gradient from album cover color
+  const [r, g, b] = color;
 
   return (
     <div className="pb-24" data-testid="album-detail">
@@ -57,7 +85,7 @@ export function AlbumDetailView({ albumId }: { albumId: string }) {
               {album.name}
             </h1>
             <div className="mb-2 text-[13px] text-[var(--fg-dim)]">
-              {album.trackIds.length} tracks · {formatLongDuration(album.duration)} ·{" "}
+              {album.trackCount || songs.length} tracks · {formatLongDuration(album.duration || songs.reduce((n, s) => n + s.duration, 0))} ·{" "}
               {album.playCount.toLocaleString()} plays
             </div>
             <button
@@ -74,7 +102,7 @@ export function AlbumDetailView({ albumId }: { albumId: string }) {
               <FavoriteHeart
                 isFavorite={fav}
                 onToggle={() => {
-                  toggleAlbumFav(album.id);
+                  usePlayerStore.getState().toggleAlbumFavorite(album.id);
                   toast(!fav ? "Added to favorites" : "Removed from favorites");
                 }}
               />
@@ -88,7 +116,9 @@ export function AlbumDetailView({ albumId }: { albumId: string }) {
                   <DropdownMenu.Content align="end" className="fs-menu-content">
                     <DropdownMenu.Item
                       className="flex cursor-pointer rounded-[3px] px-2 py-[7px] text-[13px] text-[var(--fg)] outline-none data-[highlighted]:bg-[var(--hover)]"
-                      onSelect={() => toast(`Added "${album.name}" to library queue`)}
+                      onSelect={() => {
+                        actions.addLater(songs);
+                      }}
                     >
                       Add to queue
                     </DropdownMenu.Item>
@@ -132,7 +162,15 @@ export function AlbumDetailView({ albumId }: { albumId: string }) {
 
       {/* track table */}
       <div className="px-8">
-        <SongTable songs={songs} queueContext={songs} />
+        {tracksQ.loading ? (
+          <div className="flex flex-col gap-2 pt-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-[52px] animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+            ))}
+          </div>
+        ) : (
+          <SongTable songs={songs} queueContext={songs} />
+        )}
       </div>
     </div>
   );

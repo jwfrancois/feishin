@@ -6,6 +6,8 @@ export interface Artist {
   genre: string;
   imageUrl: string;
   color: [number, number, number];
+  overview?: string;
+  albumCount?: number;
 }
 
 export interface Album {
@@ -16,8 +18,11 @@ export interface Album {
   year: number;
   genre: string;
   coverUrl: string;
+  coverTag?: string;
   color: [number, number, number];
+  /** legacy field — may be empty in server mode; prefer trackCount */
   trackIds: string[];
+  trackCount: number;
   playCount: number;
   rating: number;
   duration: number;
@@ -41,7 +46,7 @@ export interface Track {
 export interface Playlist {
   id: string;
   name: string;
-  trackIds: string[];
+  trackCount: number;
   coverUrl: string;
   color: [number, number, number];
   duration: number;
@@ -70,6 +75,10 @@ export interface Song {
   genre?: string;
   playCount?: number;
   audioUrl?: string;
+  /** audio codec/container reported by the server (flac, mp3, aac…) */
+  container?: string;
+  /** Jellyfin playlist entry id (for removing from a playlist) */
+  playlistEntryId?: string;
 }
 
 export function trackToSong(t: Track, albumCover?: string): Song {
@@ -88,6 +97,27 @@ export function trackToSong(t: Track, albumCover?: string): Song {
     playCount: t.playCount,
     audioUrl: t.audioUrl,
   };
+}
+
+export interface GenreInfo {
+  name: string;
+  trackCount: number;
+  color: string;
+}
+
+export function genreColor(name: string): string {
+  const PALETTE = [
+    "#5d3a9b", "#c25b1e", "#b0402c", "#8a6a1f", "#2675b8",
+    "#b12b2b", "#2c8a6e", "#9333ea", "#1f9e8e", "#a3a31c",
+    "#a54a2a", "#0e7f96", "#4d8a2f", "#7d3ac1", "#7e3fa8",
+  ];
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) {
+    h ^= name.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h = h >>> 0;
+  return PALETTE[h % PALETTE.length];
 }
 
 export type SortOrder = "asc" | "desc";

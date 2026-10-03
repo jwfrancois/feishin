@@ -1,9 +1,10 @@
 "use client";
-// Feishin rebuild — dialogs (create/rename playlist)
+// Feishin rebuild — dialogs (create playlist, server-backed)
 import { useState } from "react";
 import { DialogNS as Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { usePlaylistsStore } from "@/store/playlists-store";
+import { createPlaylist } from "@/lib/jellyfin";
+import { invalidateJf } from "@/hooks/use-jf";
 import { toast } from "sonner";
 
 export function CreatePlaylistDialog({
@@ -16,7 +17,25 @@ export function CreatePlaylistDialog({
   onCreated?: (id: string) => void;
 }) {
   const [name, setName] = useState("");
-  const create = usePlaylistsStore((s) => s.create);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try {
+      const id = await createPlaylist(name.trim());
+      toast(`Created playlist "${name.trim()}"`);
+      invalidateJf("playlists");
+      invalidateJf("ctx:playlists");
+      onCreated?.(id);
+      setName("");
+      onOpenChange(false);
+    } catch {
+      toast.error("Could not create playlist");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -30,13 +49,7 @@ export function CreatePlaylistDialog({
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && name.trim()) {
-                const pl = create(name.trim());
-                toast(`Created playlist "${pl.name}"`);
-                onCreated?.(pl.id);
-                setName("");
-                onOpenChange(false);
-              }
+              if (e.key === "Enter") void submit();
             }}
             placeholder="Playlist name"
             className="fs-input mb-4 w-full px-3 py-2 text-[13.5px]"
@@ -45,18 +58,8 @@ export function CreatePlaylistDialog({
             <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button
-              size="sm"
-              disabled={!name.trim()}
-              onClick={() => {
-                const pl = create(name.trim());
-                toast(`Created playlist "${pl.name}"`);
-                onCreated?.(pl.id);
-                setName("");
-                onOpenChange(false);
-              }}
-            >
-              Create
+            <Button size="sm" disabled={!name.trim() || busy} onClick={() => void submit()}>
+              {busy ? "Creating…" : "Create"}
             </Button>
           </div>
         </Dialog.Content>

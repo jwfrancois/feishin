@@ -1,51 +1,56 @@
 "use client";
 // Feishin rebuild — album artist detail route (hero with blurred bg, about, discography — faithful)
-import { useMemo, useState } from "react";
-import { Play, FastForward, ChevronDown, Radio } from "lucide-react";
-import {
-  getArtist,
-  getAlbumsByArtist,
-  getTracksByArtist,
-  trackToSong,
-  rgbStr,
-} from "@/lib/library";
+import { useEffect, useMemo, useState } from "react";
+import { Play, ChevronDown, Radio } from "lucide-react";
+import { fetchArtist, fetchArtistAlbums, fetchArtistTopSongs } from "@/lib/jellyfin";
+import type { Artist, Album, Song } from "@/lib/types";
+import { useJfQuery } from "@/hooks/use-jf";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
 import { ItemImage, RatingStars, FavoriteHeart, Kebab } from "../shared";
 import { AlbumCard } from "../album-card";
 import { SongTable } from "../song-table";
 import { useSongActions } from "../song-actions";
-import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
 import { toast } from "sonner";
 
+const DEFAULT_BIO_TEMPLATE = (name: string) =>
+  `${name} is an album artist in your library. Browse the discography below to explore their releases, or start artist radio to hear a rotating mix of their most-played tracks.`;
+
 export function ArtistDetailView({ artistId }: { artistId: string }) {
-  const artist = getArtist(artistId);
   const navigate = useRouterStore((s) => s.navigate);
   const actions = useSongActions();
-  const fav = usePlayerStore((s) => (artist ? !!s.favoriteArtists[artist.id] : false));
-  const toggleArtistFav = usePlayerStore((s) => s.toggleArtistFavorite);
   const [aboutExpanded, setAboutExpanded] = useState(false);
   const [tab, setTab] = useState<"discography" | "tracks">("discography");
 
-  const albums = useMemo(() => (artist ? getAlbumsByArtist(artist.id) : []), [artist]);
-  const topSongs = useMemo(() => {
-    if (!artist) return [];
-    return getTracksByArtist(artist.id)
-      .slice(0, 12)
-      .map((t) => {
-        const album = albums.find((a) => a.id === t.albumId);
-        return trackToSong(t, album?.coverUrl);
-      });
-  }, [artist, albums]);
+  const artistQ = useJfQuery(`artist:${artistId}`, () => fetchArtist(artistId), 10 * 60_000);
+  const albumsQ = useJfQuery(`artist:${artistId}:albums`, () => fetchArtistAlbums(artistId), 5 * 60_000);
+  const topQ = useJfQuery(`artist:${artistId}:top`, () => fetchArtistTopSongs(artistId, 12), 5 * 60_000);
+
+  const artist: Artist | undefined = artistQ.data ?? undefined;
+  const albums: Album[] = useMemo(() => albumsQ.data ?? [], [albumsQ.data]);
+  const topSongs: Song[] = useMemo(() => topQ.data ?? [], [topQ.data]);
+  const fav = usePlayerStore((s) => (artist ? !!s.favoriteArtists[artist.id] : false));
+
+  if (artistQ.loading) {
+    return (
+      <div className="px-8 pb-24 pt-10" data-testid="artist-detail-loading">
+        <div className="flex items-end gap-6">
+          <div className="h-[210px] w-[210px] shrink-0 animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+          <div className="flex-1 space-y-3 pb-2">
+            <div className="h-3 w-24 animate-pulse rounded bg-[var(--elevated)]" />
+            <div className="h-10 w-1/2 animate-pulse rounded bg-[var(--elevated)]" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!artist) {
     return <div className="p-8 text-[var(--fg-dim)]">Artist not found</div>;
   }
 
-  const allSongs = albums.flatMap((a) => getTracksByArtist(artist.id).map((t) => trackToSong(t, a.coverUrl)));
-  const trackCount = albums.reduce((n, a) => n + a.trackIds.length, 0);
-  const bio = `${artist.name} is an integral part of the ${artist.genre.toLowerCase()} scene. Since their debut, they have demonstrated the full range of their influences, crafting compositions that balance nostalgia with forward-thinking production. Both powerful and melodic, the songs are true anthems which make you wander in an atmosphere combining energy and hope.`;
-  const [r, g, b] = artist.color;
+  const trackCount = albums.reduce((n, a) => n + (a.trackCount || 0), 0);
+  const bio = artist.overview?.trim() || DEFAULT_BIO_TEMPLATE(artist.name);
 
   return (
     <div className="pb-24" data-testid="artist-detail">
@@ -68,7 +73,7 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
               {artist.name}
             </h1>
             <div className="mb-2 text-[13px] text-[var(--fg-dim)]">
-              {albums.length} albums · {trackCount} tracks
+              {albums.length} albums{trackCount > 0 ? ` · ${trackCount} tracks` : ""}
             </div>
           </div>
           <div className="flex flex-col items-end gap-3 self-end pb-1">
@@ -77,7 +82,7 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
               <FavoriteHeart
                 isFavorite={fav}
                 onToggle={() => {
-                  toggleArtistFav(artist.id);
+                  usePlayerStore.getState().toggleArtistFavorite(artist.id);
                   toast(!fav ? "Added to favorites" : "Removed from favorites");
                 }}
               />
@@ -86,18 +91,30 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" className="fs-pill" onClick={() => actions.play(allSongs, 0)}>
+              <button
+                type="button"
+                className="fs-pill"
+                onClick={async () => {
+                  // play all tracks from the discography (first album, then next pages)
+                  if (topSongs.length > 0) {
+                    actions.play(topSongs, 0);
+                  } else if (albums.length > 0) {
+                    actions.playAlbum(albums[0]);
+                  }
+                }}
+              >
                 <Play size={15} className="fill-current" />
                 Play
               </button>
               <button
                 type="button"
                 className="fs-pill"
-                onClick={() => {
-                  const songs = getTracksByArtist(artist.id).map((t) => trackToSong(t));
+                onClick={async () => {
+                  const { fetchRandomSongs } = await import("@/lib/jellyfin");
+                  const songs = await fetchRandomSongs(30);
                   if (songs.length) {
                     actions.play(songs, Math.floor(Math.random() * songs.length));
-                    toast("Shuffled artist radio", { duration: 1200 });
+                    toast("Artist radio started", { duration: 1200 });
                   }
                 }}
               >
@@ -127,7 +144,14 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
         </button>
         <button
           type="button"
-          onClick={() => toast("Artist radio started", { duration: 1200 })}
+          onClick={async () => {
+            const { fetchRandomSongs } = await import("@/lib/jellyfin");
+            const songs = await fetchRandomSongs(30);
+            if (songs.length) {
+              actions.play(songs, 0);
+              toast("Artist radio started", { duration: 1200 });
+            }
+          }}
           className="flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-[0.08em] text-[var(--fg-dim)] hover:text-[var(--fg)]"
         >
           <Radio size={13} />
@@ -139,7 +163,7 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
       <div className="px-8 pb-6">
         <h3 className="mb-2 text-xl font-extrabold text-[var(--fg)]">About {artist.name}</h3>
         <p
-          className={`max-w-4xl text-[13.5px] leading-relaxed text-[var(--fg-dim)] ${aboutExpanded ? "" : "line-clamp-3"}`}
+          className={`max-w-4xl whitespace-pre-line text-[13.5px] leading-relaxed text-[var(--fg-dim)] ${aboutExpanded ? "" : "line-clamp-3"}`}
         >
           {bio}
         </p>
@@ -162,23 +186,43 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
             </span>
             <div className="h-px flex-1 bg-[var(--border)]" />
           </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {albums.map((album) => (
-              <div key={album.id} className="relative">
-                <span className="absolute -right-1.5 -top-1.5 z-10 min-w-[22px] rounded-[4px] bg-[var(--primary)] px-1.5 py-0.5 text-center text-[11px] font-bold text-[var(--primary-contrast)]">
-                  {album.trackIds.length}
-                </span>
-                <AlbumCard album={album} width="w-full" />
-              </div>
-            ))}
-          </div>
+          {albumsQ.loading ? (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div key={i}>
+                  <div className="aspect-square w-full animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+              {albums.map((album) => (
+                <div key={album.id} className="relative">
+                  {!!album.trackCount && (
+                    <span className="absolute -right-1.5 -top-1.5 z-10 min-w-[22px] rounded-[4px] bg-[var(--primary)] px-1.5 py-0.5 text-center text-[11px] font-bold text-[var(--primary-contrast)]">
+                      {album.trackCount}
+                    </span>
+                  )}
+                  <AlbumCard album={album} width="w-full" />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         <div className="px-8">
-          <SongTable
-            songs={topSongs}
-            columns={["tracknum", "title", "album", "plays", "duration", "fav"]}
-          />
+          {topQ.loading ? (
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-[52px] animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+              ))}
+            </div>
+          ) : (
+            <SongTable
+              songs={topSongs}
+              columns={["tracknum", "title", "album", "plays", "duration", "fav"]}
+            />
+          )}
         </div>
       )}
     </div>

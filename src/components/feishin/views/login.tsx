@@ -18,30 +18,67 @@ export function LoginView() {
   const addServer = useAuthStore((s) => s.addServer);
   const setCurrent = useAuthStore((s) => s.setCurrentServer);
   const currentServerId = useAuthStore((s) => s.currentServerId);
+  const setStatus = useAuthStore((s) => s.setStatus);
 
   const [mode, setMode] = useState<"list" | "form">(servers.length ? "list" : "form");
-  const [form, setForm] = useState({ name: "", url: "", username: "", password: "", type: "navidrome" as ServerType });
+  const [form, setForm] = useState({ name: "", url: "", username: "", password: "", apiKey: "", type: "jellyfin" as ServerType });
   const [savePassword, setSavePassword] = useState(true);
   const [connecting, setConnecting] = useState(false);
 
   const connect = (opts?: { id: string }) => {
     setConnecting(true);
-    setTimeout(() => {
+    // selecting a saved server — the app root performs the connection probe
+    if (opts) {
+      setCurrent(opts.id);
       setConnecting(false);
-      if (opts) {
-        setCurrent(opts.id);
-      } else {
+      toast.success("Connecting — loading library");
+      // refresh all cached library data for the newly selected server
+      setTimeout(() => window.location.reload(), 150);
+      return;
+    }
+    (async () => {
+      if (form.type !== "jellyfin") {
+        setConnecting(false);
+        toast.error("This build connects to Jellyfin servers only");
+        return;
+      }
+      const url = form.url.trim().replace(/\/+$/, "");
+      if (!url || !form.username.trim()) {
+        setConnecting(false);
+        toast.error("URL and username are required");
+        return;
+      }
+      try {
+        const res = await fetch("/api/jf/__configure", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            username: form.username.trim(),
+            password: form.password,
+            apiKey: form.apiKey.trim() || undefined,
+          }),
+        });
+        if (!res.ok) throw new Error(`Proxy ${res.status}`);
+        const info = (await res.json()) as { serverName?: string };
         const server = addServer({
-          name: form.name.trim() || "Navidrome Demo",
-          type: form.type,
-          url: form.url.trim() || "https://music.example.com",
-          username: form.username.trim() || "demo",
+          name: form.name.trim() || info.serverName || "Jellyfin server",
+          type: "jellyfin",
+          url,
+          username: form.username.trim(),
           savePassword,
         });
+        setStatus("connected", { name: info.serverName ?? server.name, version: "" });
         setCurrent(server.id);
+        setMode("list");
+        toast.success(`Connected to ${info.serverName ?? url}`);
+        setTimeout(() => window.location.reload(), 400);
+      } catch (err) {
+        toast.error(err instanceof Error ? `Connection failed: ${err.message}` : "Connection failed");
+      } finally {
+        setConnecting(false);
       }
-      toast.success("Connected — loading library");
-    }, 600);
+    })();
   };
 
   return (
@@ -101,15 +138,17 @@ export function LoginView() {
                 Choose a saved server on the left, or add a new connection.
               </p>
               <div className="mx-auto flex max-w-[280px] flex-col gap-2">
-                <button type="button" className="fs-pill justify-center" onClick={() => connect()}>
-                  Quick connect (demo)
-                </button>
+                {servers[0] && (
+                  <button type="button" className="fs-pill justify-center" onClick={() => connect({ id: servers[0].id })}>
+                    Connect to {servers[0].name}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="fs-pill justify-center"
                   onClick={() => setMode("form")}
                 >
-                  Open menu
+                  Add a new server
                 </button>
               </div>
             </div>
@@ -125,7 +164,7 @@ export function LoginView() {
               </button>
               <h2 className="mb-1 text-xl font-extrabold text-[var(--fg)]">Add server</h2>
               <p className="mb-5 text-[13px] text-[var(--fg-dim)]">
-                Enter the full URL to your server, including the protocol and port if applicable.
+                Enter the full URL to your Jellyfin server, including the protocol and port if applicable.
               </p>
               <div className="flex flex-col gap-3">
                 <div className="grid grid-cols-3 gap-1.5">
@@ -148,13 +187,13 @@ export function LoginView() {
                 <input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="Server name (e.g. Navidrome Demo)"
+                  placeholder="Server name (e.g. My Jellyfin)"
                   className="fs-input h-10 px-3 text-[13.5px]"
                 />
                 <input
                   value={form.url}
                   onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                  placeholder="https://navidrome.my-server.com or http://192.168.0.1:4533"
+                  placeholder="https://jellyfin.my-server.com or http://192.168.0.1:8096"
                   className="fs-input h-10 px-3 text-[13.5px]"
                 />
                 <div className="grid grid-cols-2 gap-3">
@@ -172,6 +211,12 @@ export function LoginView() {
                     className="fs-input h-10 px-3 text-[13.5px]"
                   />
                 </div>
+                <input
+                  value={form.apiKey}
+                  onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+                  placeholder="API key (optional)"
+                  className="fs-input h-10 px-3 text-[13.5px]"
+                />
                 <label className="flex items-center gap-2 text-[13px] text-[var(--fg-dim)]">
                   <input
                     type="checkbox"

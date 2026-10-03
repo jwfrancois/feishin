@@ -1,5 +1,6 @@
 "use client";
 // Feishin rebuild — shared small components (rating, favorite, images, headers)
+import { useEffect, useState } from "react";
 import { Heart, Star, MoreHorizontal, ListMusic } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
@@ -87,13 +88,30 @@ export function ItemImage({
   className?: string;
   rounded?: boolean;
 }) {
+  const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  // reset state when the source changes
+  useEffect(() => {
+    setFailed(false);
+    setLoaded(false);
+  }, [src]);
+
   return (
     <div
       className={cn("relative overflow-hidden bg-[var(--elevated)] shrink-0", rounded && "rounded-full", className)}
     >
-      {src ? (
+      {src && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={alt} className="h-full w-full object-cover" draggable={false} loading="lazy" />
+        <img
+          src={src}
+          alt={alt}
+          className={cn("h-full w-full object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")}
+          draggable={false}
+          loading="lazy"
+          onLoad={() => setLoaded(true)}
+          onError={() => setFailed(true)}
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-[var(--fg-dim)]">
           <ListMusic size={16} />

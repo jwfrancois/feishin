@@ -1,24 +1,31 @@
 "use client";
-// Feishin rebuild — albums list route (grid/table toggle, sort/filter toolbar)
-import { useMemo, useState } from "react";
-import { LayoutGrid, List, ArrowDownUp, Plus } from "lucide-react";
+// Feishin rebuild — albums list route (grid/table toggle, sort/filter toolbar, server pagination)
+import { useEffect, useMemo, useRef, useState } from "react";
+import { LayoutGrid, List, ArrowDownUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { allAlbums } from "@/lib/library";
+import { fetchAlbumsPage } from "@/lib/jellyfin";
 import type { Album } from "@/lib/types";
 import { AlbumCard } from "../album-card";
-import { ScrollCarousel } from "../scroll-carousel";
-import { ItemImage, RatingStars } from "../shared";
+import { ItemImage } from "../shared";
 import { useRouterStore } from "@/store/router-store";
-import { formatDuration } from "@/lib/library";
+import { formatDuration } from "@/lib/format";
+import { useJfQuery } from "@/hooks/use-jf";
 import { DropdownMenuNS as DropdownMenu } from "@/components/ui/dropdown-menu";
 import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
 import { usePlayerStore } from "@/store/player-store";
-import { getTracksByAlbum, trackToSong } from "@/lib/library";
 import { useSongActions } from "../song-actions";
 import { toast } from "sonner";
 import { CtxItem, CtxSeparator } from "../shared";
 
-type SortKey = "name" | "artist" | "year" | "recentlyAdded" | "playCount" | "rating" | "random" | "duration";
+type SortKey = "name" | "artist" | "year" | "recentlyAdded" | "playCount" | "random";
+
+const SORT_JF: Record<Exclude<SortKey, "artist">, { sortBy: string; sortOrder: "Ascending" | "Descending" }> = {
+  name: { sortBy: "SortName", sortOrder: "Ascending" },
+  year: { sortBy: "ProductionYear", sortOrder: "Ascending" },
+  recentlyAdded: { sortBy: "DateCreated", sortOrder: "Descending" },
+  playCount: { sortBy: "PlayCount", sortOrder: "Descending" },
+  random: { sortBy: "Random", sortOrder: "Ascending" },
+};
 
 const SORT_LABELS: Record<SortKey, string> = {
   name: "Name",
@@ -26,15 +33,16 @@ const SORT_LABELS: Record<SortKey, string> = {
   year: "Year",
   recentlyAdded: "Recently added",
   playCount: "Play count",
-  rating: "Rating",
   random: "Random",
-  duration: "Duration",
 };
+
+const PAGE_SIZE = 60;
 
 function AlbumContextMenu({ album, children }: { album: Album; children: React.ReactNode }) {
   const actions = useSongActions();
   const fav = usePlayerStore((s) => !!s.favoriteAlbums[album.id]);
   const toggleAlbumFav = usePlayerStore((s) => s.toggleAlbumFavorite);
+
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>{children}</ContextMenu.Trigger>
@@ -42,19 +50,12 @@ function AlbumContextMenu({ album, children }: { album: Album; children: React.R
         <ContextMenu.Content className="fs-menu-content">
           <CtxItem
             icon={<span className="text-[13px] font-bold">▶</span>}
-            onSelect={() => {
-              const songs = getTracksByAlbum(album.id).map((t) => trackToSong(t, album.coverUrl));
-              actions.play(songs, 0);
-            }}
+            onSelect={async () => actions.playAlbum(album)}
           >
             Play
           </CtxItem>
-          <CtxItem onSelect={() => actions.playNext(getTracksByAlbum(album.id).map((t) => trackToSong(t, album.coverUrl)))}>
-            Play next
-          </CtxItem>
-          <CtxItem onSelect={() => actions.addLater(getTracksByAlbum(album.id).map((t) => trackToSong(t, album.coverUrl)))}>
-            Add to queue
-          </CtxItem>
+          <CtxItem onSelect={() => actions.playAlbumNext(album)}>Play next</CtxItem>
+          <CtxItem onSelect={() => actions.playAlbumLater(album)}>Add to queue</CtxItem>
           <CtxSeparator />
           <CtxItem
             onSelect={() => {
@@ -122,46 +123,95 @@ export function AlbumsView() {
   const [sort, setSort] = useState<SortKey>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [filter, setFilter] = useState("");
+  const [debouncedFilter, setDebouncedFilter] = useState("");
+  const [pagesLoaded, setPagesLoaded] = useState(1);
+  const [accumulated, setAccumulated] = useState<Album[]>([]);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  const albums = useMemo(() => {
-    let arr = filter
-      ? allAlbums.filter(
-          (a) => a.name.toLowerCase().includes(filter.toLowerCase()) || a.artistName.toLowerCase().includes(filter.toLowerCase()),
-        )
-      : [...allAlbums];
-    const dir = sortDirection === "asc" ? 1 : -1;
-    switch (sort) {
-      case "name":
-        arr.sort((a, b) => a.name.localeCompare(b.name) * dir);
-        break;
-      case "artist":
-        arr.sort((a, b) => a.artistName.localeCompare(b.artistName) * dir);
-        break;
-      case "year":
-        arr.sort((a, b) => (a.year - b.year) * dir);
-        break;
-      case "recentlyAdded":
-        arr.sort((a, b) => (b.id > a.id ? 1 : -1));
-        break;
-      case "playCount":
-        arr.sort((a, b) => (b.playCount - a.playCount) * dir);
-        break;
-      case "rating":
-        arr.sort((a, b) => (b.rating - a.rating) * dir);
-        break;
-      case "duration":
-        arr.sort((a, b) => (a.duration - b.duration) * dir);
-        break;
-      case "random":
-        arr.sort(() => Math.random() - 0.5);
-        break;
-    }
-    return arr;
-  }, [sort, sortDirection, filter]);
+  // debounce the filter input
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedFilter(filter);
+      setPagesLoaded(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [filter]);
+
+  // reset pagination when sort changes
+  useEffect(() => {
+    setPagesLoaded(1);
+  }, [sort, sortDirection]);
+
+  const isSearch = debouncedFilter.trim().length > 0;
+  const jfSort = SORT_JF[sort === "artist" ? "name" : sort];
+  const sortOrder = sortDirection === "asc" ? "Ascending" : "Descending";
+
+  const queryKey = isSearch
+    ? `albums:search:${debouncedFilter}`
+    : `albums:${sort}:${sortOrder}:${pagesLoaded}`;
+
+  const { data, loading } = useJfQuery(
+    queryKey,
+    () =>
+      fetchAlbumsPage({
+        sortBy: jfSort.sortBy,
+        sortOrder: jfSort.sortOrder,
+        startIndex: isSearch ? 0 : (pagesLoaded - 1) * PAGE_SIZE,
+        limit: isSearch ? 60 : PAGE_SIZE,
+        searchTerm: isSearch ? debouncedFilter.trim() : undefined,
+      }),
+    isSearch ? 60_000 : 3 * 60_000,
+  );
+
+  // merge fetched pages into the accumulated list (per sort direction)
+  useEffect(() => {
+    if (!data) return;
+    setAccumulated((prev) => {
+      if (isSearch) return data.albums;
+      const seen = new Set(prev.map((a) => a.id));
+      const merged = [...prev];
+      for (const a of data.albums) {
+        if (!seen.has(a.id)) {
+          seen.add(a.id);
+          merged.push(a);
+        }
+      }
+      return merged;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  // clear accumulation when sort/search changes
+  useEffect(() => {
+    setAccumulated([]);
+  }, [sort, sortDirection, debouncedFilter]);
+
+  // infinite scroll
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || isSearch) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && data && accumulated.length > 0 && !loading) {
+          if (pagesLoaded * PAGE_SIZE < (data.total ?? 0)) {
+            setPagesLoaded((p) => p + 1);
+          }
+        }
+      },
+      { rootMargin: "600px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [data, accumulated.length, loading, pagesLoaded, isSearch]);
+
+  const total = data?.total ?? 0;
 
   return (
     <div className="px-8 pb-24 pt-8" data-testid="albums-view">
-      <h1 className="mb-6 text-2xl font-black tracking-tight text-[var(--fg)]">Albums</h1>
+      <div className="mb-6 flex items-baseline gap-3">
+        <h1 className="text-2xl font-black tracking-tight text-[var(--fg)]">Albums</h1>
+        {!loading && total > 0 && <span className="text-[13px] text-[var(--fg-dim)]">{total.toLocaleString()}</span>}
+      </div>
 
       {/* toolbar */}
       <div className="mb-6 flex items-center gap-2">
@@ -223,18 +273,42 @@ export function AlbumsView() {
         </div>
       </div>
 
-      {layout === "grid" ? (
+      {loading && accumulated.length === 0 ? (
         <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
-          {albums.map((album) => (
-            <AlbumContextMenu key={album.id} album={album}>
-              <div>
-                <AlbumCard album={album} width="w-full" />
-              </div>
-            </AlbumContextMenu>
+          {Array.from({ length: 18 }).map((_, i) => (
+            <div key={i}>
+              <div className="aspect-square w-full animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+              <div className="mt-2 h-3.5 w-3/4 animate-pulse rounded bg-[var(--elevated)]" />
+              <div className="mt-1.5 h-3 w-1/2 animate-pulse rounded bg-[var(--elevated)]" />
+            </div>
           ))}
         </div>
+      ) : accumulated.length === 0 ? (
+        <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">
+          {isSearch ? `No albums matching "${debouncedFilter}"` : "No albums found"}
+        </div>
+      ) : layout === "grid" ? (
+        <>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+            {accumulated.map((album) => (
+              <AlbumContextMenu key={album.id} album={album}>
+                <div>
+                  <AlbumCard album={album} width="w-full" />
+                </div>
+              </AlbumContextMenu>
+            ))}
+          </div>
+          <div ref={sentinelRef} className="h-10" />
+          {!isSearch && loading && accumulated.length > 0 && (
+            <div className="py-4 text-center text-[12.5px] text-[var(--fg-dim)]">Loading more albums…</div>
+          )}
+        </>
       ) : (
-        <AlbumsTable albums={albums} />
+        <>
+          <AlbumsTable albums={accumulated} />
+          <div ref={sentinelRef} className="h-10" />
+          {!isSearch && loading && <div className="py-4 text-center text-[12.5px] text-[var(--fg-dim)]">Loading more albums…</div>}
+        </>
       )}
     </div>
   );

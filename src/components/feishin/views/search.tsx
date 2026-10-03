@@ -1,27 +1,36 @@
 "use client";
-// Feishin rebuild — search route (feishin's global search with type filter tabs)
-import { useEffect, useMemo, useState } from "react";
+// Feishin rebuild — search route (feishin's global search with type filter tabs, server-backed)
+import { useEffect, useState } from "react";
 import { Search as SearchIcon } from "lucide-react";
-import { searchLibrary, getAlbumCover } from "@/lib/library";
-import { trackToSong } from "@/lib/library";
+import { searchAll } from "@/lib/jellyfin";
+import type { SearchResults } from "@/lib/jellyfin";
 import { useRouterStore } from "@/store/router-store";
 import { cn } from "@/lib/utils";
 import { AlbumCard } from "../album-card";
 import { SongTable } from "../song-table";
 import { ItemImage } from "../shared";
+import { useJfQuery } from "@/hooks/use-jf";
 
 const TABS = ["All", "Songs", "Albums", "Artists"] as const;
 
 export function SearchView({ initialQuery = "" }: { initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery);
+  const [debounced, setDebounced] = useState(initialQuery);
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
   const navigate = useRouterStore((s) => s.navigate);
 
-  const results = useMemo(() => searchLibrary(query), [query]);
-  const songs = useMemo(
-    () => results.tracks.slice(0, 50).map((t) => trackToSong(t, getAlbumCover(t.albumId))),
-    [results],
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 450);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const enabled = debounced.length > 0;
+  const { data, loading, error } = useJfQuery(
+    enabled ? `search:${debounced}` : null,
+    () => searchAll(debounced),
+    60_000,
   );
+  const results: SearchResults | undefined = data;
 
   return (
     <div className="px-8 pb-24 pt-8" data-testid="search-view">
@@ -53,17 +62,25 @@ export function SearchView({ initialQuery = "" }: { initialQuery?: string }) {
         ))}
       </div>
 
-      {!query ? (
+      {!enabled ? (
         <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">
           Start typing to search your library
         </div>
+      ) : loading ? (
+        <div className="flex flex-col gap-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="h-[52px] animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">Search failed — {error}</div>
       ) : (
         <div className="flex flex-col gap-10">
-          {(tab === "All" || tab === "Artists") && results.artists.length > 0 && (
+          {(tab === "All" || tab === "Artists") && (results?.artists.length ?? 0) > 0 && (
             <section>
               <h2 className="mb-3 text-lg font-extrabold text-[var(--fg)]">Artists</h2>
               <div className="flex gap-4 overflow-x-auto pb-2">
-                {results.artists.slice(0, 8).map((artist) => (
+                {results!.artists.slice(0, 8).map((artist) => (
                   <button
                     key={artist.id}
                     type="button"
@@ -78,24 +95,24 @@ export function SearchView({ initialQuery = "" }: { initialQuery?: string }) {
               </div>
             </section>
           )}
-          {(tab === "All" || tab === "Albums") && results.albums.length > 0 && (
+          {(tab === "All" || tab === "Albums") && (results?.albums.length ?? 0) > 0 && (
             <section>
               <h2 className="mb-3 text-lg font-extrabold text-[var(--fg)]">Albums</h2>
               <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {results.albums.slice(0, 12).map((album) => (
+                {results!.albums.slice(0, 12).map((album) => (
                   <AlbumCard key={album.id} album={album} width="w-full" />
                 ))}
               </div>
             </section>
           )}
-          {(tab === "All" || tab === "Songs") && songs.length > 0 && (
+          {(tab === "All" || tab === "Songs") && (results?.songs.length ?? 0) > 0 && (
             <section>
               <h2 className="mb-3 text-lg font-extrabold text-[var(--fg)]">Songs</h2>
-              <SongTable songs={songs} columns={["tracknum", "title", "artist", "album", "duration", "fav"]} />
+              <SongTable songs={results!.songs} columns={["tracknum", "title", "artist", "album", "duration", "fav"]} />
             </section>
           )}
-          {songs.length === 0 && results.albums.length === 0 && results.artists.length === 0 && (
-            <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">No results for "{query}"</div>
+          {(results?.songs.length ?? 0) === 0 && (results?.albums.length ?? 0) === 0 && (results?.artists.length ?? 0) === 0 && (
+            <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">No results for "{debounced}"</div>
           )}
         </div>
       )}

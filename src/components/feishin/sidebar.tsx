@@ -1,10 +1,11 @@
 "use client";
 // Feishin rebuild — sidebar (search, nav, library items, playlists, server box, now-playing image)
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   Home,
   Disc3,
   User,
+  Heart,
   Settings as SettingsIcon,
   Music2,
   ChevronDown,
@@ -22,8 +23,9 @@ import { useRouterStore, type Route } from "@/store/router-store";
 import { useSettingsStore } from "@/store/settings-store";
 import { useAuthStore } from "@/store/auth-store";
 import { usePlayerStore } from "@/store/player-store";
-import { usePlaylistsStore } from "@/store/playlists-store";
-import { formatLongDuration, getAlbumCover, allPlaylists } from "@/lib/library";
+import { formatLongDuration } from "@/lib/format";
+import { fetchPlaylistsPage } from "@/lib/jellyfin";
+import { useJfQuery } from "@/hooks/use-jf";
 import { ItemImage } from "./shared";
 import { DropdownMenuNS as DropdownMenu } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
@@ -34,6 +36,7 @@ const LIBRARY_ITEMS: { label: string; icon: React.ReactNode; route: Route }[] = 
   { label: "Tracks", icon: <Music2 size={17} />, route: { view: "tracks" } },
   { label: "Albums", icon: <Disc3 size={17} />, route: { view: "albums" } },
   { label: "Artists", icon: <User size={17} />, route: { view: "artists" } },
+  { label: "Favorites", icon: <Heart size={17} />, route: { view: "favorites" } },
   { label: "Settings", icon: <SettingsIcon size={17} />, route: { view: "settings" } },
 ];
 
@@ -47,6 +50,7 @@ function isActiveRoute(current: Route, target: Route): boolean {
 function ServerBox() {
   const currentServer = useAuthStore((s) => s.servers.find((x) => x.id === s.currentServerId));
   const servers = useAuthStore((s) => s.servers);
+  const serverInfo = useAuthStore((s) => s.serverInfo);
   const setCurrent = useAuthStore((s) => s.setCurrentServer);
   const navigate = useRouterStore((s) => s.navigate);
 
@@ -60,10 +64,10 @@ function ServerBox() {
       </div>
       <div className="min-w-0 flex-1 leading-tight">
         <div className="truncate text-[13px] font-bold text-[var(--fg)]">
-          {currentServer ? currentServer.name : "No server"}
+          {serverInfo?.name || (currentServer ? currentServer.name : "No server")}
         </div>
         <div className="truncate text-[12px] text-[var(--fg-dim)]">
-          {currentServer ? `${typeLabel} · Music Library` : "Connect a server"}
+          {currentServer ? `${typeLabel} · ${currentServer.username}` : "Connect a server"}
         </div>
       </div>
       <DropdownMenu.Root>
@@ -78,7 +82,12 @@ function ServerBox() {
               <DropdownMenu.Item
                 key={s.id}
                 className="flex cursor-pointer select-none items-center gap-2 rounded-[3px] px-2 py-[7px] text-[13px] text-[var(--fg)] outline-none data-[highlighted]:bg-[var(--hover)]"
-                onSelect={() => setCurrent(s.id)}
+                onSelect={() => {
+                  if (s.id !== currentServer?.id) {
+                    setCurrent(s.id);
+                    setTimeout(() => window.location.reload(), 150);
+                  }
+                }}
               >
                 <Disc3 size={14} />
                 {s.name}
@@ -113,30 +122,16 @@ export function Sidebar({ onCreatePlaylist }: { onCreatePlaylist?: () => void })
   const [createOpen, setCreateOpen] = useState(false);
 
   const song = usePlayerStore((s) => s.queue[s.currentIndex]);
-  const userPlaylists = usePlaylistsStore((s) => s.playlists);
-  const playlists = useMemo(() => {
-    // merge user playlists with server (manifest) playlists, like feishin
-    return [
-      ...userPlaylists.map((p) => ({
-        id: p.id,
-        name: p.name,
-        count: p.trackIds.length,
-        duration: p.trackIds.length * 115,
-        coverUrl: undefined as string | undefined,
-        user: true,
-      })),
-      ...allPlaylists.map((p) => ({
-        id: p.id,
-        name: p.name,
-        count: p.trackIds.length,
-        duration: p.duration,
-        coverUrl: p.coverUrl,
-        user: false,
-      })),
-    ];
-  }, [userPlaylists]);
+  const { data: playlistsData } = useJfQuery("sidebar:playlists", () => fetchPlaylistsPage({ limit: 15 }), 120_000);
+  const playlists = (playlistsData?.playlists ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    count: p.trackCount,
+    duration: p.duration,
+    coverUrl: p.coverUrl,
+  }));
   const sidebarListRef = useRef<HTMLDivElement | null>(null);
-  const cover = getAlbumCover(song?.albumId);
+  const cover = song?.albumCoverUrl;
 
   if (collapsed) {
     return (

@@ -5,7 +5,7 @@ import { Clock, Heart, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Song } from "@/lib/types";
 import { usePlayerStore } from "@/store/player-store";
-import { formatDuration } from "@/lib/library";
+import { formatDuration } from "@/lib/format";
 import { ItemImage, FavoriteHeart } from "./shared";
 import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
 import { SongContextMenuContent } from "./song-actions";

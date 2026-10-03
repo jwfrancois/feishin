@@ -1,5 +1,5 @@
 "use client";
-// Feishin rebuild — song action helpers + reusable context menu content
+// Feishin rebuild — song/album action helpers + reusable context menu content (server-backed)
 import { useCallback } from "react";
 import { toast } from "sonner";
 import {
@@ -14,14 +14,15 @@ import {
   Trash2,
   Radio,
   MicVocal,
+  Loader2,
 } from "lucide-react";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
 import { useSettingsStore } from "@/store/settings-store";
-import { usePlaylistsStore } from "@/store/playlists-store";
-import type { Song } from "@/lib/types";
+import type { Song, Album } from "@/lib/types";
+import { fetchAlbumTracks, addToPlaylist, createPlaylist } from "@/lib/jellyfin";
+import { useJfQuery, invalidateJf } from "@/hooks/use-jf";
 import { CtxItem, CtxSeparator, CtxLabel } from "./shared";
-import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
 
 export function useSongActions() {
   const navigate = useRouterStore((s) => s.navigate);
@@ -35,19 +36,16 @@ export function useSongActions() {
     [player],
   );
 
-  const toggle = useCallback(
-    (songs: Song[], index = 0) => {
-      const s = usePlayerStore.getState();
-      const cur = s.current();
-      const target = songs[index];
-      if (cur && target && cur.id === target.id) {
-        s.toggle();
-        return;
-      }
-      s.setQueue(songs, index, true);
-    },
-    [],
-  );
+  const toggle = useCallback((songs: Song[], index = 0) => {
+    const s = usePlayerStore.getState();
+    const cur = s.current();
+    const target = songs[index];
+    if (cur && target && cur.id === target.id) {
+      s.toggle();
+      return;
+    }
+    s.setQueue(songs, index, true);
+  }, []);
 
   const playNext = useCallback((songs: Song[]) => {
     usePlayerStore.getState().addToQueue(songs, "next");
@@ -58,6 +56,26 @@ export function useSongActions() {
     usePlayerStore.getState().addToQueue(songs, "later");
     toast(`Added ${songs.length} song${songs.length > 1 ? "s" : ""} to queue`);
   }, []);
+
+  const playAlbum = useCallback(async (album: Album) => {
+    toast(`Loading "${album.name}"…`, { duration: 1500 });
+    const songs = await fetchAlbumTracks(album.id);
+    if (songs.length === 0) {
+      toast.error("Album has no playable tracks");
+      return;
+    }
+    usePlayerStore.getState().setQueue(songs, 0, true);
+  }, []);
+
+  const playAlbumNext = useCallback(async (album: Album) => {
+    const songs = await fetchAlbumTracks(album.id);
+    playNext(songs);
+  }, [playNext]);
+
+  const playAlbumLater = useCallback(async (album: Album) => {
+    const songs = await fetchAlbumTracks(album.id);
+    addLater(songs);
+  }, [addLater]);
 
   const goToAlbum = useCallback(
     (albumId?: string) => {
@@ -78,9 +96,62 @@ export function useSongActions() {
     s.toggleTrackFavorite(song.id);
     const nowFav = !!usePlayerStore.getState().favoriteTracks[song.id];
     toast(nowFav ? `Added "${song.name}" to favorites` : `Removed "${song.name}" from favorites`);
+    if (nowFav) invalidateJf("Filters=IsFavorite");
   }, []);
 
-  return { play, toggle, playNext, addLater, goToAlbum, goToArtist, toggleFavorite };
+  return { play, toggle, playNext, addLater, playAlbum, playAlbumNext, playAlbumLater, goToAlbum, goToArtist, toggleFavorite };
+}
+
+/** Shared "add to playlist" section for context menus (server playlists). */
+function AddToPlaylistItems({ song, onDone }: { song: Song; onDone?: () => void }) {
+  const { data, loading } = useJfQuery("ctx:playlists", () => import("@/lib/jellyfin").then((m) => m.fetchPlaylistsPage({ limit: 12 })), 120_000);
+  const playlists = data?.playlists ?? [];
+
+  const add = async (playlistId: string, name: string) => {
+    try {
+      await addToPlaylist(playlistId, [song.id]);
+      toast(`Added "${song.name}" to "${name}"`);
+      onDone?.();
+    } catch {
+      toast.error(`Could not add to "${name}"`);
+    }
+  };
+
+  const quickCreate = async () => {
+    const name = window.prompt("New playlist name");
+    if (!name?.trim()) return;
+    try {
+      const id = await createPlaylist(name.trim(), [song.id]);
+      toast(`Created playlist "${name.trim()}"`);
+      invalidateJf("playlists");
+      invalidateJf("ctx:playlists");
+      if (id) void id;
+      onDone?.();
+    } catch {
+      toast.error("Could not create playlist");
+    }
+  };
+
+  return (
+    <>
+      <CtxSeparator />
+      <CtxLabel>Add to playlist</CtxLabel>
+      {loading && (
+        <CtxItem>
+          <Loader2 size={14} className="animate-spin" /> Loading…
+        </CtxItem>
+      )}
+      {!loading &&
+        playlists.slice(0, 6).map((pl) => (
+          <CtxItem key={pl.id} onSelect={() => add(pl.id, pl.name)} icon={<ListPlus size={15} />}>
+            {pl.name}
+          </CtxItem>
+        ))}
+      <CtxItem onSelect={quickCreate} icon={<ListPlus size={15} />}>
+        New playlist…
+      </CtxItem>
+    </>
+  );
 }
 
 export function SongContextMenuContent({
@@ -101,8 +172,6 @@ export function SongContextMenuContent({
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const fav = usePlayerStore((s) => !!s.favoriteTracks[song.id]);
   const toggleFav = usePlayerStore((s) => s.toggleTrackFavorite);
-  const playlists = usePlaylistsStore((s) => s.playlists);
-  const addToPlaylist = usePlaylistsStore((s) => s.addTrack);
   const scrobbleEnabled = useSettingsStore((s) => s.playback.scrobble);
 
   return (
@@ -116,20 +185,7 @@ export function SongContextMenuContent({
       <CtxItem onSelect={() => actions.addLater([song])} icon={<ListEnd size={15} />}>
         Add to queue
       </CtxItem>
-      <CtxSeparator />
-      <CtxLabel>Add to playlist</CtxLabel>
-      {playlists.slice(0, 5).map((pl) => (
-        <CtxItem
-          key={pl.id}
-          onSelect={() => {
-            addToPlaylist(pl.id, song.id);
-            toast(`Added "${song.name}" to "${pl.name}"`);
-          }}
-          icon={<ListPlus size={15} />}
-        >
-          {pl.name}
-        </CtxItem>
-      ))}
+      <AddToPlaylistItems song={song} />
       <CtxSeparator />
       <CtxItem
         onSelect={() => {

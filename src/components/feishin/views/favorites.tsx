@@ -1,39 +1,47 @@
 "use client";
-// Feishin rebuild — favorites route (songs / albums / artists tabs)
+// Feishin rebuild — favorites route (songs / albums / artists tabs, backed by server IsFavorite)
 import { useMemo, useState } from "react";
 import { Heart } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { allTracks, allAlbums, allArtists, getAlbumCover, trackToSong } from "@/lib/library";
-import { usePlayerStore } from "@/store/player-store";
+import { fetchFavorites, mapAlbum, mapArtist, mapSong } from "@/lib/jellyfin";
+import { useJfQuery, invalidateJf } from "@/hooks/use-jf";
 import { useRouterStore } from "@/store/router-store";
 import { SongTable } from "../song-table";
 import { AlbumCard } from "../album-card";
 import { ItemImage } from "../shared";
+import type { Album, Artist, Song } from "@/lib/types";
 
 const TABS = ["Songs", "Albums", "Artists"] as const;
 
 export function FavoritesView({ initialTab = "Songs" }: { initialTab?: (typeof TABS)[number] }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>(initialTab);
-  const favTracks = usePlayerStore((s) => s.favoriteTracks);
-  const favAlbums = usePlayerStore((s) => s.favoriteAlbums);
-  const favArtists = usePlayerStore((s) => s.favoriteArtists);
-  const starredAt = usePlayerStore((s) => s.starredAt);
   const navigate = useRouterStore((s) => s.navigate);
 
-  const songs = useMemo(
-    () =>
-      allTracks
-        .filter((t) => favTracks[t.id])
-        .sort((a, b) => (starredAt[b.id] ?? 0) - (starredAt[a.id] ?? 0))
-        .map((t) => trackToSong(t, getAlbumCover(t.albumId))),
-    [favTracks, starredAt],
-  );
-  const albums = useMemo(() => allAlbums.filter((a) => favAlbums[a.id]), [favAlbums]);
-  const artists = useMemo(() => allArtists.filter((a) => favArtists[a.id]), [favArtists]);
+  const songsQ = useJfQuery("fav:songs", async () => {
+    const { items } = await fetchFavorites("Audio");
+    return items.map(mapSong);
+  }, 30_000);
+  const albumsQ = useJfQuery("fav:albums", async () => {
+    const { items } = await fetchFavorites("MusicAlbum");
+    return items.map(mapAlbum);
+  }, 30_000);
+  const artistsQ = useJfQuery("fav:artists", async () => {
+    const { items } = await fetchFavorites("MusicArtist");
+    return items.map(mapArtist);
+  }, 30_000);
+
+  const songs: Song[] = useMemo(() => songsQ.data ?? [], [songsQ.data]);
+  const albums: Album[] = useMemo(() => albumsQ.data ?? [], [albumsQ.data]);
+  const artists: Artist[] = useMemo(() => artistsQ.data ?? [], [artistsQ.data]);
 
   return (
     <div className="px-8 pb-24 pt-8" data-testid="favorites-view">
-      <h1 className="mb-6 text-2xl font-black tracking-tight text-[var(--fg)]">Favorites</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-black tracking-tight text-[var(--fg)]">Favorites</h1>
+        <button type="button" className="fs-pill !py-2 text-[12.5px]" onClick={() => invalidateJf("fav:")}>
+          Refresh
+        </button>
+      </div>
       <div className="mb-6 flex gap-1">
         {TABS.map((t) => (
           <button
@@ -51,7 +59,13 @@ export function FavoritesView({ initialTab = "Songs" }: { initialTab?: (typeof T
       </div>
 
       {tab === "Songs" &&
-        (songs.length > 0 ? (
+        (songsQ.loading ? (
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="h-[52px] animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+            ))}
+          </div>
+        ) : songs.length > 0 ? (
           <SongTable songs={songs} columns={["tracknum", "title", "artist", "album", "duration", "fav"]} />
         ) : (
           <div className="flex flex-col items-center gap-2 py-20 text-[var(--fg-dim)]">
@@ -61,7 +75,15 @@ export function FavoritesView({ initialTab = "Songs" }: { initialTab?: (typeof T
         ))}
 
       {tab === "Albums" &&
-        (albums.length > 0 ? (
+        (albumsQ.loading ? (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i}>
+                <div className="aspect-square w-full animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+              </div>
+            ))}
+          </div>
+        ) : albums.length > 0 ? (
           <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
             {albums.map((album) => (
               <AlbumCard key={album.id} album={album} width="w-full" />
@@ -75,7 +97,15 @@ export function FavoritesView({ initialTab = "Songs" }: { initialTab?: (typeof T
         ))}
 
       {tab === "Artists" &&
-        (artists.length > 0 ? (
+        (artistsQ.loading ? (
+          <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i}>
+                <div className="aspect-square w-full animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+              </div>
+            ))}
+          </div>
+        ) : artists.length > 0 ? (
           <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
             {artists.map((artist) => (
               <button

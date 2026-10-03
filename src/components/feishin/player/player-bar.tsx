@@ -1,6 +1,6 @@
 "use client";
 // Feishin rebuild — player bar (feishin's 90px playerbar: left/center/right grid)
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Play,
   Pause,
@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { usePlayerStore } from "@/store/player-store";
 import { useRouterStore } from "@/store/router-store";
 import { useSettingsStore } from "@/store/settings-store";
-import { formatDuration, getAlbumCover } from "@/lib/library";
+import { formatDuration } from "@/lib/format";
 import { ItemImage, RatingStars, FavoriteHeart, Kebab } from "../shared";
 import { FsSlider } from "./fs-slider";
 import { useSongActions } from "../song-actions";
@@ -118,7 +118,7 @@ function LeftControls() {
   const sidebarCollapsed = useSettingsStore((s) => s.sidebar.collapsed);
   const actions = useSongActions();
   const fav = usePlayerStore((s) => (song ? !!s.favoriteTracks[song.id] : false));
-  const cover = useMemo(() => getAlbumCover(song?.albumId), [song?.albumId]);
+  const cover = song?.albumCoverUrl;
 
   if (!song) {
     return (

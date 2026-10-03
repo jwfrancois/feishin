@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import type { Album } from "@/lib/types";
 import { useRouterStore } from "@/store/router-store";
 import { useSongActions } from "./song-actions";
-import { getTracksByAlbum, trackToSong } from "@/lib/library";
 import { ItemImage } from "./shared";
 
 export function AlbumCard({
@@ -46,8 +45,7 @@ export function AlbumCard({
             if (onPlay) {
               onPlay();
             } else {
-              const songs = getTracksByAlbum(album.id).map((t) => trackToSong(t, album.coverUrl));
-              actions.play(songs, 0);
+              void actions.playAlbum(album);
             }
           }}
           className="absolute inset-0 flex items-center justify-center bg-black/45 opacity-0 transition-opacity hover:opacity-100 focus:opacity-100 group-hover:opacity-100"

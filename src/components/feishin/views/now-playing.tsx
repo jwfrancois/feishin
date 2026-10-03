@@ -1,19 +1,13 @@
 "use client";
 // Feishin rebuild — fullscreen now playing (hero bg, tabs: UP NEXT / RELATED / LYRICS / VISUALIZER)
+// Lyrics come from Jellyfin's lyrics API; related tracks from the item's Similar endpoint.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Settings2, PictureInPicture2, Pause, Play } from "lucide-react";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
-import {
-  getAlbum,
-  getArtist,
-  getAlbumCover,
-  trackToSong,
-  allTracks,
-  mulberry32,
-  hashStr,
-} from "@/lib/library";
-import { getLyrics, getActiveLyricIndex } from "@/lib/lyrics";
+import { fetchAlbum, fetchArtist, similarAlbumsSongs, fetchPlainLyricsAsSynced, type LyricLine } from "@/lib/jellyfin";
+import type { Album, Artist, Song } from "@/lib/types";
+import { useJfQuery } from "@/hooks/use-jf";
 import { ItemImage, FavoriteHeart } from "../shared";
 import { cn } from "@/lib/utils";
 import { useSongActions } from "../song-actions";
@@ -81,6 +75,8 @@ function Visualizer() {
     return () => cancelAnimationFrame(rafRef.current);
   }, []);
 
+  void isPlaying;
+
   return (
     <div className="flex h-full items-end justify-center pb-8">
       <canvas ref={canvasRef} className="h-[320px] w-full max-w-xl" aria-label="Audio visualizer" />
@@ -91,24 +87,54 @@ function Visualizer() {
 function LyricsPanel() {
   const song = usePlayerStore((s) => s.queue[s.currentIndex]);
   const position = usePlayerStore((s) => s.position);
-  const duration = usePlayerStore((s) => s.duration);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const lyrics = useMemo(
-    () => (song ? getLyrics(song.id, song.name, song.artist, duration || song.duration) : []),
-    [song, duration],
+  const { data, loading } = useJfQuery(
+    song ? `lyrics:${song.id}` : null,
+    async () => {
+      if (!song) return null;
+      return fetchPlainLyricsAsSynced(song.id, song.duration || 0);
+    },
+    10 * 60_000,
   );
-  const activeIndex = getActiveLyricIndex(lyrics, position);
+
+  const lyrics: LyricLine[] = data ?? [];
+  const activeIndex = lyrics.length > 0 ? getActiveLyricIndex(lyrics, position) : 0;
 
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || lyrics.length === 0) return;
     const active = el.querySelector<HTMLElement>(`[data-lyric-index="${activeIndex}"]`);
     if (active) {
       const top = active.offsetTop - el.clientHeight / 2 + active.clientHeight / 2;
       el.scrollTo({ top, behavior: "smooth" });
     }
-  }, [activeIndex]);
+  }, [activeIndex, lyrics.length]);
+
+  if (!song) return null;
+
+  if (loading) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 py-8">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-6 w-2/3 animate-pulse rounded bg-white/10" />
+        ))}
+      </div>
+    );
+  }
+
+  if (lyrics.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center py-8">
+        <div className="text-center text-white/50">
+          <p className="text-[15px] font-bold">No lyrics available</p>
+          <p className="mt-1 text-[12.5px]">
+            {song.name} — {song.artist}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto py-8 text-center [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-testid="lyrics-panel">
@@ -169,18 +195,28 @@ function UpNextPanel() {
 function RelatedPanel() {
   const song = usePlayerStore((s) => s.queue[s.currentIndex]);
   const navigate = useRouterStore((s) => s.navigate);
-  const related = useMemo(() => {
-    if (!song) return [];
-    // sonically similar: same genre first, then random
-    const sameGenre = allTracks.filter((t) => t.genre === song.genre && t.id !== song.id);
-    const others = allTracks.filter((t) => t.genre !== song.genre && t.artistId !== song.artistId);
-    const rnd = mulberry32(hashStr(song.id));
-    const shuffled = [...others].sort(() => rnd() - 0.5);
-    return [...sameGenre.slice(0, 6), ...shuffled.slice(0, 6)].map((t) => trackToSong(t, getAlbumCover(t.albumId)));
-  }, [song]);
+  const { data, loading } = useJfQuery(
+    song ? `related:${song.id}` : null,
+    async () => (song?.albumId ? similarAlbumsSongs(song.albumId, 12) : ([] as Song[])),
+    10 * 60_000,
+  );
+  const related: Song[] = data ?? [];
+
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2 py-4">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="h-10 animate-pulse rounded-[4px] bg-white/5" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="h-full overflow-y-auto py-4">
+      {related.length === 0 && (
+        <div className="py-10 text-center text-[13.5px] text-[var(--fg-dim)]">No related tracks found</div>
+      )}
       {related.map((s) => (
         <div key={s.id} className="fs-row flex cursor-default items-center gap-3 rounded-[4px] px-4 py-2">
           <ItemImage src={s.albumCoverUrl} alt="" className="h-10 w-10" />
@@ -188,7 +224,7 @@ function RelatedPanel() {
             <div className="truncate text-[13.5px] font-semibold text-[var(--fg)]">{s.name}</div>
             <button
               type="button"
-              onClick={() => navigate({ view: "artist", id: s.artistId })}
+              onClick={() => s.artistId && navigate({ view: "artist", id: s.artistId })}
               className="block max-w-full truncate text-left text-[12.5px] text-[var(--fg-dim)] hover:text-[var(--fg)]"
             >
               {s.artist}
@@ -210,9 +246,11 @@ export function NowPlayingView() {
   const actions = useSongActions();
   const [tab, setTab] = useState<Tab>("LYRICS");
 
-  const album = song?.albumId ? getAlbum(song.albumId) : undefined;
-  const artist = song?.artistId ? getArtist(song.artistId) : undefined;
-  const cover = getAlbumCover(song?.albumId);
+  const albumQ = useJfQuery(song?.albumId ? `album:${song.albumId}` : null, () => fetchAlbum(song!.albumId!), 10 * 60_000);
+  const artistQ = useJfQuery(song?.artistId ? `artist:${song.artistId}` : null, () => fetchArtist(song!.artistId!), 10 * 60_000);
+  const album: Album | undefined = albumQ.data ?? undefined;
+  const artist: Artist | undefined = artistQ.data ?? undefined;
+  const cover = song?.albumCoverUrl ?? album?.coverUrl;
 
   if (!song) {
     return (
@@ -236,7 +274,8 @@ export function NowPlayingView() {
     );
   }
 
-  const [r, g, b] = album?.color ?? [55, 116, 252];
+  const heroColor = album?.color ?? [55, 116, 252];
+  const [r, g, b] = heroColor;
 
   return (
     <div className="relative h-full overflow-hidden" data-testid="now-playing">
@@ -302,9 +341,17 @@ export function NowPlayingView() {
                 {song.album}
               </button>
               <div className="mt-3 flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-wide text-white/50">
-                <span>FLAC</span>
-                <span>·</span>
-                <span>{song.year}</span>
+                {song.container && (
+                  <>
+                    <span>{song.container.toUpperCase()}</span>
+                    <span>·</span>
+                  </>
+                )}
+                {song.year ? (
+                  <>
+                    <span>{song.year}</span>
+                  </>
+                ) : null}
                 {song.genre && (
                   <>
                     <span>·</span>
@@ -352,4 +399,13 @@ export function NowPlayingView() {
       </div>
     </div>
   );
+}
+
+function getActiveLyricIndex(lines: LyricLine[], position: number): number {
+  let active = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].time <= position) active = i;
+    else break;
+  }
+  return active;
 }

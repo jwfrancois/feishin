@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { RepeatMode, Song } from "@/lib/types";
+import { setFavorite } from "@/lib/jellyfin";
 
 interface PlayerState {
   queue: Song[];
@@ -62,20 +63,9 @@ export const usePlayerStore = create<PlayerState>()(
       muted: false,
       shuffle: false,
       repeat: "off",
-      favoriteTracks: {
-        tr0001: true,
-        tr0002: true,
-        tr0006: true,
-        tr0013: true,
-        tr0021: true,
-        tr0027: true,
-        tr0038: true,
-        tr0044: true,
-        tr0055: true,
-        tr0066: true,
-      },
-      favoriteAlbums: { "album-al00": true, "album-al10": true, "album-al13": true },
-      favoriteArtists: { "natasha-beller": true, "midnight-dual": true },
+      favoriteTracks: {},
+      favoriteAlbums: {},
+      favoriteArtists: {},
       localPlayCounts: {},
       starredAt: {},
 
@@ -191,29 +181,36 @@ export const usePlayerStore = create<PlayerState>()(
         set((s) => {
           const favoriteTracks = { ...s.favoriteTracks };
           const starredAt = { ...s.starredAt };
-          if (favoriteTracks[id]) {
-            delete favoriteTracks[id];
-            delete starredAt[id];
-          } else {
+          const nowFav = !favoriteTracks[id];
+          if (nowFav) {
             favoriteTracks[id] = true;
             starredAt[id] = Date.now();
+          } else {
+            delete favoriteTracks[id];
+            delete starredAt[id];
           }
+          // sync to Jellyfin (best-effort)
+          setFavorite(id, nowFav).catch(() => {});
           return { favoriteTracks, starredAt };
         }),
 
       toggleAlbumFavorite: (id) =>
         set((s) => {
           const favoriteAlbums = { ...s.favoriteAlbums };
-          if (favoriteAlbums[id]) delete favoriteAlbums[id];
-          else favoriteAlbums[id] = true;
+          const nowFav = !favoriteAlbums[id];
+          if (nowFav) favoriteAlbums[id] = true;
+          else delete favoriteAlbums[id];
+          setFavorite(id, nowFav).catch(() => {});
           return { favoriteAlbums };
         }),
 
       toggleArtistFavorite: (id) =>
         set((s) => {
           const favoriteArtists = { ...s.favoriteArtists };
-          if (favoriteArtists[id]) delete favoriteArtists[id];
-          else favoriteArtists[id] = true;
+          const nowFav = !favoriteArtists[id];
+          if (nowFav) favoriteArtists[id] = true;
+          else delete favoriteArtists[id];
+          setFavorite(id, nowFav).catch(() => {});
           return { favoriteArtists };
         }),
 
@@ -228,6 +225,7 @@ export const usePlayerStore = create<PlayerState>()(
     }),
     {
       name: "feishin-player",
+      version: 2,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         queue: s.queue,

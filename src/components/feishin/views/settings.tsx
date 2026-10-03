@@ -164,12 +164,53 @@ function PlaybackSection() {
 function ServersSection() {
   const servers = useAuthStore((s) => s.servers);
   const currentServerId = useAuthStore((s) => s.currentServerId);
+  const serverInfo = useAuthStore((s) => s.serverInfo);
   const setCurrent = useAuthStore((s) => s.setCurrentServer);
   const remove = useAuthStore((s) => s.removeServer);
   const addServer = useAuthStore((s) => s.addServer);
+  const setStatus = useAuthStore((s) => s.setStatus);
   const navigate = useRouterStore((s) => s.navigate);
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", url: "", username: "", password: "", type: "navidrome" as ServerType });
+  const [form, setForm] = useState({ name: "", url: "", username: "", password: "", apiKey: "", type: "jellyfin" as ServerType });
+  const [busy, setBusy] = useState(false);
+
+  const addNew = async () => {
+    if (form.type !== "jellyfin") {
+      toast.error("This build connects to Jellyfin servers only");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/jf/__configure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: form.url.trim().replace(/\/+$/, ""),
+          username: form.username.trim(),
+          password: form.password,
+          apiKey: form.apiKey.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(`Proxy ${res.status}`);
+      const info = (await res.json()) as { serverName?: string };
+      const server = addServer({
+        name: form.name.trim() || info.serverName || "Jellyfin server",
+        type: "jellyfin",
+        url: form.url.trim().replace(/\/+$/, ""),
+        username: form.username.trim(),
+      });
+      setStatus("connected", { name: info.serverName ?? server.name, version: "" });
+      setCurrent(server.id);
+      toast(`Connected to "${info.serverName ?? server.name}"`);
+      setForm({ name: "", url: "", username: "", password: "", apiKey: "", type: "jellyfin" });
+      setAddOpen(false);
+      setTimeout(() => window.location.reload(), 400);
+    } catch (err) {
+      toast.error(err instanceof Error ? `Connection failed: ${err.message}` : "Connection failed");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -198,7 +239,8 @@ function ServersSection() {
                 {s.name} {s.id === currentServerId && <span className="text-[var(--primary)]">· active</span>}
               </div>
               <div className="truncate text-[12.5px] text-[var(--fg-dim)]">
-                {s.type} · {s.url}
+                {s.type} · {s.url} · {s.username}
+                {s.id === currentServerId && serverInfo?.version ? ` · v${serverInfo.version}` : ""}
               </div>
             </div>
           </button>
@@ -251,7 +293,7 @@ function ServersSection() {
               <input
                 value={form.url}
                 onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                placeholder="http://192.168.0.1:4533"
+                placeholder="https://jellyfin.my-server.com"
                 className="fs-input h-9 px-3 text-[13px]"
               />
               <input
@@ -267,27 +309,19 @@ function ServersSection() {
                 placeholder="Password"
                 className="fs-input h-9 px-3 text-[13px]"
               />
+              <input
+                value={form.apiKey}
+                onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+                placeholder="API key (optional)"
+                className="fs-input h-9 px-3 text-[13px]"
+              />
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setAddOpen(false)}>
                 Cancel
               </Button>
-              <Button
-                size="sm"
-                disabled={!form.name.trim() || !form.username.trim()}
-                onClick={() => {
-                  addServer({
-                    name: form.name.trim(),
-                    type: form.type,
-                    url: form.url.trim() || "https://demo.local",
-                    username: form.username.trim(),
-                  });
-                  toast(`Server "${form.name.trim()}" added`);
-                  setForm({ name: "", url: "", username: "", password: "", type: "navidrome" });
-                  setAddOpen(false);
-                }}
-              >
-                Add
+              <Button size="sm" disabled={busy || !form.url.trim() || !form.username.trim()} onClick={() => void addNew()}>
+                {busy ? "Connecting…" : "Connect"}
               </Button>
             </div>
           </Dialog.Content>
@@ -327,6 +361,7 @@ export function SettingsView({ section = "general" }: { section?: string }) {
   const [active, setActive] = useState(section);
   const theme = useSettingsStore((s) => s.theme);
   const accent = useSettingsStore((s) => s.accent);
+  const serverInfo = useAuthStore((s) => s.serverInfo);
 
   // apply theme live (also applied on mount in app root)
   const themeDef = THEMES.find((t) => t.id === theme) ?? THEMES[0];
@@ -351,7 +386,8 @@ export function SettingsView({ section = "general" }: { section?: string }) {
           ))}
           <div className="mt-6 rounded-[4px] bg-[var(--elevated)] p-3 text-[12px] text-[var(--fg-dim)]">
             <div className="mb-1 font-bold text-[var(--fg)]">Feishin</div>
-            Web client · demo server
+            Web client · {serverInfo?.name ?? "Jellyfin"}
+            {serverInfo?.version ? ` · v${serverInfo.version}` : ""}
             <div className="mt-1">
               Theme: {themeDef.label}
               {accent ? ` · accent ${accent}` : ""}
