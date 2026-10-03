@@ -1,7 +1,7 @@
 "use client";
 // Feishin rebuild — shared small components (rating, favorite, images, headers)
 import { useEffect, useState } from "react";
-import { Heart, Star, MoreHorizontal, ListMusic } from "lucide-react";
+import { Heart, Star, MoreHorizontal, ListMusic, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
 import { usePlayerStore } from "@/store/player-store";
@@ -72,6 +72,39 @@ export function FavoriteHeart({
       <Heart
         size={size}
         className={cn("transition-colors", isFavorite ? "fill-[var(--primary)] text-[var(--primary)]" : "text-[var(--fg-dim)] hover:text-[var(--fg)]")}
+      />
+    </button>
+  );
+}
+
+export function LikeButton({
+  liked,
+  onToggle,
+  size = 15,
+  className,
+}: {
+  liked: boolean;
+  onToggle: () => void;
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={liked ? "Remove like" : "Like"}
+      title={liked ? "Remove like" : "Like"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      className={cn("fs-icon-btn p-1", className)}
+    >
+      <ThumbsUp
+        size={size}
+        className={cn(
+          "transition-colors",
+          liked ? "fill-[var(--primary)] text-[var(--primary)]" : "text-[var(--fg-dim)] hover:text-[var(--fg)]",
+        )}
       />
     </button>
   );

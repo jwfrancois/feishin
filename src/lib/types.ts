@@ -8,6 +8,8 @@ export interface Artist {
   color: [number, number, number];
   overview?: string;
   albumCount?: number;
+  /** Jellyfin like/dislike (UserData.Likes) — null means neither */
+  likes?: boolean | null;
 }
 
 export interface Album {
@@ -24,7 +26,10 @@ export interface Album {
   trackIds: string[];
   trackCount: number;
   playCount: number;
+  /** legacy 5-star field — Jellyfin 10.11 has no numeric rating API; kept for Navidrome compatibility */
   rating: number;
+  /** Jellyfin like/dislike (UserData.Likes) — null means neither */
+  likes?: boolean | null;
   duration: number;
 }
 
@@ -79,6 +84,8 @@ export interface Song {
   container?: string;
   /** Jellyfin playlist entry id (for removing from a playlist) */
   playlistEntryId?: string;
+  /** Jellyfin like/dislike (UserData.Likes) — null means neither */
+  likes?: boolean | null;
 }
 
 export function trackToSong(t: Track, albumCover?: string): Song {

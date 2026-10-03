@@ -9,11 +9,13 @@ interface JfConnection {
   apiKey: string;
 }
 
+// Connection defaults. Override via environment variables —
+// JELLYFIN_URL, JELLYFIN_USERNAME, JELLYFIN_PASSWORD, JELLYFIN_API_KEY.
 const DEFAULT_CONN: JfConnection = {
-  url: "https://manitou.dyabavadra.com",
-  username: "dyabavadra",
-  password: "bonjour66",
-  apiKey: "14c48564a8e040869d1587d27715fde0",
+  url: process.env.JELLYFIN_URL ?? "https://manitou.dyabavadra.com",
+  username: process.env.JELLYFIN_USERNAME ?? "dyabavadra",
+  password: process.env.JELLYFIN_PASSWORD ?? "bonjour66",
+  apiKey: process.env.JELLYFIN_API_KEY ?? "14c48564a8e040869d1587d27715fde0",
 };
 
 interface ConnState {
@@ -183,6 +185,10 @@ export async function jfJson(path: string, opts: JfFetchOptions = {}): Promise<u
       params.set("userId", state.userId);
     }
     if (path.startsWith("Items/") && path.endsWith("/Similar") && !params.get("userId")) {
+      params.set("userId", state.userId);
+    }
+    // like/dislike writes (POST + DELETE /UserItems/{id}/Rating) need explicit userId when using API-key auth
+    if (path.startsWith("UserItems/") && !params.get("userId")) {
       params.set("userId", state.userId);
     }
   }

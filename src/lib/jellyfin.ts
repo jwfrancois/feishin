@@ -55,7 +55,7 @@ export interface JfItem {
   Overview?: string;
   ImageTags?: { Primary?: string };
   PlaylistItemIds?: string[];
-  UserData?: { PlayCount?: number; IsFavorite?: boolean; LastPlayedDate?: string };
+  UserData?: { PlayCount?: number; IsFavorite?: boolean; Likes?: boolean | null; LastPlayedDate?: string };
 }
 
 interface Paged<T> {
@@ -83,7 +83,8 @@ export function mapAlbum(item: JfItem): Album {
     trackIds: [],
     trackCount: item.ChildCount ?? 0,
     playCount: item.UserData?.PlayCount ?? 0,
-    rating: 0,
+    rating: 0, // Jellyfin 10.11 exposes no numeric-rating API; likes/dislikes are used instead
+    likes: item.UserData?.Likes ?? null,
     duration: (item.RunTimeTicks ?? 0) / 1e7,
   };
 }
@@ -107,6 +108,7 @@ export function mapSong(item: JfItem): Song {
     audioUrl: jfAudioUrl(item.Id),
     container: item.Container,
     playlistEntryId: item.PlaylistItemIds?.[0],
+    likes: item.UserData?.Likes ?? null,
   };
 }
 
@@ -118,6 +120,7 @@ export function mapArtist(item: JfItem): Artist {
     imageUrl: item.ImageTags?.Primary ? jfImageUrl(item.Id, item.ImageTags.Primary, 400) : "",
     color: [60, 64, 80],
     overview: item.Overview,
+    likes: item.UserData?.Likes ?? null,
   };
 }
 
@@ -385,6 +388,19 @@ export async function fetchPlaylistDetail(playlistId: string): Promise<Playlist 
 export async function setFavorite(itemId: string, favorite: boolean): Promise<void> {
   if (favorite) await jfPost(`favorite/${itemId}`, {}, {});
   else await jfDelete(`favorite/${itemId}`);
+}
+
+/**
+ * Set the Jellyfin like/dislike for an item (UserData.Likes).
+ * Jellyfin 10.11 removed the numeric 0-10 rating; `likes` is the remaining primitive.
+ * Pass null to clear.
+ */
+export async function setLike(itemId: string, like: boolean | null): Promise<void> {
+  if (like === null) {
+    await jfDelete(`UserItems/${itemId}/Rating`);
+  } else {
+    await jfPost(`UserItems/${itemId}/Rating`, { likes: like ? "true" : "false" }, {});
+  }
 }
 
 export interface LyricLine {

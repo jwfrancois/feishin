@@ -2,13 +2,13 @@
 // Feishin rebuild — album detail route (hero header + track table, faithful to feishin album page)
 import { useEffect, useMemo, useState } from "react";
 import { Play, SkipForward, FastForward, MoreHorizontal } from "lucide-react";
-import { fetchAlbum, fetchAlbumTracks } from "@/lib/jellyfin";
+import { setLike, fetchAlbum, fetchAlbumTracks } from "@/lib/jellyfin";
 import type { Album, Song } from "@/lib/types";
 import { formatLongDuration, extractDominantColor } from "@/lib/format";
 import { useJfQuery } from "@/hooks/use-jf";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
-import { ItemImage, RatingStars, FavoriteHeart, Kebab } from "../shared";
+import { ItemImage, LikeButton, FavoriteHeart, Kebab } from "../shared";
 import { SongTable } from "../song-table";
 import { useSongActions } from "../song-actions";
 import { DropdownMenuNS as DropdownMenu } from "@/components/ui/dropdown-menu";
@@ -28,6 +28,18 @@ export function AlbumDetailView({ albumId }: { albumId: string }) {
   const fav = usePlayerStore((s) => (album ? !!s.favoriteAlbums[album.id] : false));
 
   const [color, setColor] = useState<[number, number, number]>(FALLBACK_COLOR);
+  const [likeOverride, setLikeOverride] = useState<boolean | null>(null);
+  const liked = likeOverride ?? !!album?.likes;
+
+  const toggleAlbumLike = () => {
+    if (!album) return;
+    const next = !liked;
+    setLikeOverride(next);
+    setLike(album.id, next ? true : null).catch(() => {
+      setLikeOverride(null);
+      toast.error("Failed to update like");
+    });
+  };
   useEffect(() => {
     if (!album) return;
     let cancelled = false;
@@ -98,7 +110,7 @@ export function AlbumDetailView({ albumId }: { albumId: string }) {
           </div>
           <div className="flex flex-col items-end gap-3 self-end pb-1">
             <div className="flex items-center gap-3">
-              <RatingStars value={album.rating} onChange={(v) => toast(`Rated ${v || "0"} stars`, { duration: 1200 })} />
+              <LikeButton liked={liked} onToggle={toggleAlbumLike} size={16} />
               <FavoriteHeart
                 isFavorite={fav}
                 onToggle={() => {

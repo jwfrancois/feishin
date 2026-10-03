@@ -24,7 +24,8 @@ import { usePlayerStore } from "@/store/player-store";
 import { useRouterStore } from "@/store/router-store";
 import { useSettingsStore } from "@/store/settings-store";
 import { formatDuration } from "@/lib/format";
-import { ItemImage, RatingStars, FavoriteHeart, Kebab } from "../shared";
+import { setLike } from "@/lib/jellyfin";
+import { ItemImage, LikeButton, FavoriteHeart, Kebab } from "../shared";
 import { FsSlider } from "./fs-slider";
 import { useSongActions } from "../song-actions";
 import { SongContextMenuContent } from "../song-actions";
@@ -119,6 +120,18 @@ function LeftControls() {
   const actions = useSongActions();
   const fav = usePlayerStore((s) => (song ? !!s.favoriteTracks[song.id] : false));
   const cover = song?.albumCoverUrl;
+  const [likeOverride, setLikeOverride] = useState<{ id: string; liked: boolean } | null>(null);
+  const liked = likeOverride && song && likeOverride.id === song.id ? likeOverride.liked : !!song?.likes;
+
+  const toggleLike = () => {
+    if (!song) return;
+    const next = !liked;
+    setLikeOverride({ id: song.id, liked: next });
+    setLike(song.id, next ? true : null).catch(() => {
+      setLikeOverride(null);
+      toast.error("Failed to update like");
+    });
+  };
 
   if (!song) {
     return (
@@ -174,7 +187,8 @@ function LeftControls() {
         </button>
         <span className="sr-only">{isPlaying ? "Playing" : "Paused"}</span>
       </div>
-      <div className="ml-1 hidden sm:block">
+      <div className="ml-1 hidden sm:flex items-center">
+        <LikeButton liked={liked} onToggle={toggleLike} />
         <FavoriteHeart isFavorite={fav} onToggle={() => actions.toggleFavorite(song)} />
       </div>
     </div>
@@ -189,14 +203,12 @@ function RightControls() {
   const toggleMute = usePlayerStore((s) => s.toggleMute);
   const navigate = useRouterStore((s) => s.navigate);
   const volumeWheelStep = useSettingsStore((s) => s.playback.volumeWheelStep);
-  const [demoRating, setDemoRating] = useState(3);
 
   const VolIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
   return (
     <div className="flex h-full flex-col items-end justify-center gap-2 pr-4">
       <div className="flex items-center gap-1.5">
-        <RatingStars value={demoRating} onChange={setDemoRating} size={13} />
         <button
           type="button"
           title="Auto DJ"

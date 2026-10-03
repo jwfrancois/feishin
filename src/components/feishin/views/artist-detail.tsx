@@ -2,12 +2,12 @@
 // Feishin rebuild — album artist detail route (hero with blurred bg, about, discography — faithful)
 import { useEffect, useMemo, useState } from "react";
 import { Play, ChevronDown, Radio } from "lucide-react";
-import { fetchArtist, fetchArtistAlbums, fetchArtistTopSongs } from "@/lib/jellyfin";
+import { setLike, fetchArtist, fetchArtistAlbums, fetchArtistTopSongs } from "@/lib/jellyfin";
 import type { Artist, Album, Song } from "@/lib/types";
 import { useJfQuery } from "@/hooks/use-jf";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
-import { ItemImage, RatingStars, FavoriteHeart, Kebab } from "../shared";
+import { ItemImage, LikeButton, FavoriteHeart, Kebab } from "../shared";
 import { AlbumCard } from "../album-card";
 import { SongTable } from "../song-table";
 import { useSongActions } from "../song-actions";
@@ -30,6 +30,19 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
   const albums: Album[] = useMemo(() => albumsQ.data ?? [], [albumsQ.data]);
   const topSongs: Song[] = useMemo(() => topQ.data ?? [], [topQ.data]);
   const fav = usePlayerStore((s) => (artist ? !!s.favoriteArtists[artist.id] : false));
+
+  const [likeOverride, setLikeOverride] = useState<boolean | null>(null);
+  const liked = likeOverride ?? !!artist?.likes;
+
+  const toggleArtistLike = () => {
+    if (!artist) return;
+    const next = !liked;
+    setLikeOverride(next);
+    setLike(artist.id, next ? true : null).catch(() => {
+      setLikeOverride(null);
+      toast.error("Failed to update like");
+    });
+  };
 
   if (artistQ.loading) {
     return (
@@ -78,7 +91,7 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
           </div>
           <div className="flex flex-col items-end gap-3 self-end pb-1">
             <div className="flex items-center gap-3">
-              <RatingStars value={4} onChange={(v) => toast(`Rated ${v || "0"} stars`, { duration: 1200 })} />
+              <LikeButton liked={liked} onToggle={toggleArtistLike} size={16} />
               <FavoriteHeart
                 isFavorite={fav}
                 onToggle={() => {

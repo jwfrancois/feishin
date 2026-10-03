@@ -77,3 +77,25 @@ Stage Summary:
 - Code pushed to https://github.com/jwfrancois/feishin (private)
 - Runtime cache excluded from version control
 - Note: Jellyfin server credentials remain hardcoded in src/lib/jf-server.ts / src/store/auth-store.ts
+
+---
+Task ID: 3
+Agent: main (Super Z)
+Task: Continue Jellyfin real-data integration (close remaining gaps) + write README + push
+
+Work Log:
+- Verified prior integration still live: POST /api/jf/__ready connects to "desalyn" 10.11.11; albums query returns real data; browser renders home/albums with 7,031 albums, zero console errors.
+- Probed rating API: Jellyfin 10.11 removed numeric 0-10 rating (POST classic path 200 but does not persist; consolidated /Items/{id}/Rating 404). Confirmed via v10.11.0 source (UserLibraryController.cs): only likes/dislike remains (POST /UserItems/{itemId}/Rating?likes=). Upstream Feishin also hides star ratings for Jellyfin (isRatingSupported = NAVIDROME || SUBSONIC only).
+- Resolved the "ratings local-only" gap faithfully: removed fake/hardcoded RatingStars from album-detail (toast-only), artist-detail (hardcoded value=4), player-bar (demoRating useState); added real Jellyfin LikeButton (thumbs-up) wired to UserData.Likes via new setLike() in jellyfin.ts (POST likes=true/false, DELETE clears); added likes?: boolean|null to Album/Artist/Song types + mappers (UserData.Likes).
+- Bugfix found in testing: DELETE /UserItems/{id}/Rating returns 400 without explicit userId (API-key auth); added userId injection for UserItems/* paths in jf-server.ts jfJson; re-verified full like→unlike cycle through proxy (200/200, server state clean).
+- Added userId/GET interception for __ready control endpoint in JSON proxy (was leaking to Jellyfin on GET).
+- Added env-var override support for server credentials (JELLYFIN_URL/USERNAME/PASSWORD/API_KEY) with existing values as defaults.
+- Added proxy cache invalidation for UserItems on POST/DELETE.
+- Probed genre counts: facetFields ignored by 10.11 /Items, /Genres lacks ItemCount — stays name-only (server limitation, documented).
+- Verified e2e via agent-browser: album detail shows LikeButton + FavoriteHeart; like click → POST /api/jf/UserItems/.../Rating?likes=true 200; server-side persistence confirmed (Likes: True, Rating: 10); test artifacts cleaned up; zero page errors.
+- Wrote comprehensive README.md (features, setup, env config, architecture diagram, known limitations, credits).
+
+Stage Summary:
+- All UI now reflects real server state: favorites, likes, playcounts, playlists; no fake/hardcoded values remain in views.
+- README.md added; credentials overridable via env vars.
+- Ready to commit + push to github.com/jwfrancois/feishin.

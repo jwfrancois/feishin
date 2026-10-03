@@ -38,6 +38,11 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
   const qs = req.nextUrl.searchParams.toString();
   try {
+    // control endpoints (also available via GET for convenience)
+    if (p === "__ready") {
+      const state = await ensureReady();
+      return NextResponse.json(state);
+    }
     const data = await jfGetCached(p, req.nextUrl.searchParams, ttlFor(p, qs));
     return NextResponse.json(data);
   } catch (err) {
@@ -65,6 +70,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const data = await jfJson(p, { method: "POST", params: req.nextUrl.searchParams, body });
     invalidateJfCache("Playlists");
     invalidateJfCache("Filters=IsFavorite");
+    invalidateJfCache("UserItems");
     return NextResponse.json(data ?? {});
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Jellyfin request failed" }, { status: 502 });
@@ -81,6 +87,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     const res = await jfJson(p, { method: "DELETE", params: req.nextUrl.searchParams });
     invalidateJfCache("Playlists");
     invalidateJfCache("Items");
+    invalidateJfCache("UserItems");
     return NextResponse.json(res ?? {});
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Jellyfin request failed" }, { status: 502 });
