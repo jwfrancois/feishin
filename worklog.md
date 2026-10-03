@@ -21,3 +21,17 @@ Stage Summary:
 - Deliverable: faithful Feishin web-client rebuild, single route src/app/page.tsx rendering FeishinApp (zustand view routing), all assets local under public/media.
 - Key decisions: mock Navidrome demo server (no live server dependency); client-side library manifest (no DB needed); HTML5 audio backend (web player, like feishin web build); synthesized audio gives real playback/seek/visualizer/lyrics sync.
 - Known limitations: MPV backend / DLNA / smart playlist editor are desktop-only features represented in UI but not functional; lyrics are deterministic mock content.
+
+---
+Task ID: 1-fix (post-delivery bugfix)
+Agent: main (Super Z)
+Task: Fix React hydration mismatch error reported on <body> (data-new-gr-c-s-check-loaded / data-gr-ext-installed attributes)
+
+Work Log:
+- Diagnosed: attributes `data-new-gr-c-s-check-loaded="14.1334.0"` and `data-gr-ext-installed=""` are injected into <body> by the user's Grammarly browser extension before React hydration; <html> already had suppressHydrationWarning but <body> did not.
+- Fix: added `suppressHydrationWarning` prop to the <body> element in src/app/layout.tsx (React suppresses attribute-level mismatches one level deep on that element — the documented remedy for extension-induced hydration errors).
+- Verified: dev server returns 200; type-check of src clean (remaining tsc noise is from feishin-ref/ reference repo and examples/, pre-existing); agent-browser loaded http://localhost:3000 with zero page errors and zero hydration console warnings; screenshot confirms login/Add-server screen renders correctly.
+
+Stage Summary:
+- src/app/layout.tsx body now has suppressHydrationWarning; hydration error caused by Grammarly extension resolved without affecting app behavior.
+
