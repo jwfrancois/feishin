@@ -211,3 +211,22 @@ Stage Summary:
 - Fanart.tv API key is live from .env: health probe reports "API key working"; Coldplay artist photo fetched source=fanart (1000x1000) and served through the jf-img proxy pipeline.
 - .env untracked from git (key can never be pushed; history verified clean).
 - Health score holds at 67 solely due to the unmounted /mnt1/unraid_share on the server host; recovers to ~92 automatically on the next 5-min check after the user remounts it.
+
+---
+Task ID: 9
+Agent: main (Super Z)
+Task: Add a professional Hi-Fi studio sound system to the media player
+
+Work Log:
+- DSP engine (src/lib/audio/hifi-engine.ts): Web Audio singleton — MediaElementSource → preamp → 10-band peaking EQ (ISO octaves 31 Hz…16 kHz, Q 1.41) → bs2b-flavored crossfeed (0.3 ms delayed lowpassed opposite channel + direct-gain dip) → mid/side stereo width matrix → balance (StereoPanner) → dynamics compressor + static makeup estimate → loudness-norm gain → master → destination; analysers tapped post-chain (spectrum 2048 + per-channel L/R meters); bit-perfect bypass path with click-free 15 ms crossfades; mono upmix forced before splitting stages; MediaElementSource cached in WeakMap (re-mount safe); context resumed on play + panel open.
+- Loudness normalization: 450 ms RMS loop toward ~-19 dBFS, gain clamped 0.2-5, smoothed 0.6 s.
+- Store (src/store/hifi-store.ts): zustand+persist "feishin-hifi" — enabled, preamp, eqGains[10], preset id, crossfeed, stereoWidth, balance, dynamics (off/reference/night/club/custom), loudnessNorm, miniViz + non-persisted UI store for panel open state; engine subscribes and applies all params with setTargetAtTime ramps.
+- Presets (src/lib/audio/eq-presets.ts): 13 studio EQ presets (Flat, Studio Reference, Acoustic, Bass Boost/Reduce, Classical, Dance, Electronic, Hip-Hop, Jazz, Pop, Rock, Vocal Boost).
+- UI: hifi-visualizer.tsx (canvas log-frequency spectrum with dBFS grid + peak-hold + L/R 28-segment meters, panel + mini variants, dpr-aware); hifi-panel.tsx (right Sheet: processing pill, output readout cards, visualizer, preamp, EQ with vertical sliders + preset dropdown, imaging, dynamics chips + custom sliders, reset, mini-viz toggle); player bar gained waveform button + optional mini spectrum; settings Playback gained "Hi-Fi Studio sound system" row (Open studio + master switch).
+- Wired: audio-engine attaches engine to the stable <audio> node once; panel mounted once in feishin-app; HifiPanel reads useHifiUi.
+- Verified e2e (agent-browser, real playback of Nelly Furtado via Jellyfin): engine Running 44.1 kHz / 23 ms / 2 ch; EQ band live 0→+2.0 dB; Rock preset fills all 10 bands exactly; Night chip selects; bypass A/B — audio flows through BOTH paths (t advanced 156→165.9 bypassed, →167.6 re-enabled); track auto-advanced through the chain; spectrum + L/R meters animate with music; mini viz live in player bar; settings "Open studio" opens the panel; 0 console errors, 0 page errors; screenshots in download/hifi-e2e-*.png.
+- Fixed during verify: Float32Array<ArrayBuffer> generics (TS 5.9); flex-shrink collapsed the canvas container to 0 height → shrink-0.
+- tsc: 0 errors in src/; eslint 0 errors on touched files.
+
+Stage Summary:
+- The player now has a real studio signal chain: preamp, 10-band graphic EQ with 13 presets, headphone crossfeed, M/S stereo width, balance, 4-mode dynamics compressor, loudness normalization, bit-perfect bypass, spectrum analyzer + peak meters (panel) and an optional mini visualizer in the player bar. All settings persist and apply live without interruption to playback.

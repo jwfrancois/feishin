@@ -8,6 +8,7 @@ import { applyTheme } from "@/lib/themes";
 import { Toaster } from "sonner";
 import { AudioEngine } from "./player/audio-engine";
 import { PlayerBar } from "./player/player-bar";
+import { HifiPanel } from "./player/hifi/hifi-panel";
 import { Sidebar } from "./sidebar";
 import { RightQueuePanel } from "./layout/right-queue";
 import { Hotkeys } from "./hotkeys";
@@ -205,6 +206,7 @@ export default function FeishinApp() {
         <RightQueuePanel />
       </div>
       <PlayerBar />
+      <HifiPanel />
       <Toaster position="bottom-right" theme="dark" />
     </div>
   );

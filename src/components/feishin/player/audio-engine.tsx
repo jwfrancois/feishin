@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { usePlayerStore } from "@/store/player-store";
 import { useSettingsStore } from "@/store/settings-store";
 import { reportPlayback } from "@/lib/jellyfin";
+import { hifiEngine } from "@/lib/audio/hifi-engine";
 import { toast } from "sonner";
 
 export function AudioEngine() {
@@ -29,6 +30,14 @@ export function AudioEngine() {
   useEffect(() => {
     stateRef.current = { queue, currentIndex, repeat, isPlaying };
   }, [queue, currentIndex, repeat, isPlaying]);
+
+  // Hi-Fi studio DSP: route the element through the Web Audio chain once.
+  // The element is a stable DOM node across queue changes, and the engine keeps
+  // the MediaElementSource cached so re-mounts never double-create it.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) hifiEngine.attach(audio);
+  }, []);
 
   const currentSong = queue[currentIndex];
 

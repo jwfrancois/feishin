@@ -18,6 +18,7 @@ import {
   MicVocal,
   Star,
   Maximize2,
+  AudioWaveform,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePlayerStore } from "@/store/player-store";
@@ -27,6 +28,8 @@ import { formatDuration } from "@/lib/format";
 import { setLike } from "@/lib/jellyfin";
 import { ItemImage, LikeButton, FavoriteHeart, Kebab } from "../shared";
 import { FsSlider } from "./fs-slider";
+import { HifiVisualizer } from "./hifi/hifi-visualizer";
+import { useHifiStore, useHifiUi } from "@/store/hifi-store";
 import { useSongActions } from "../song-actions";
 import { SongContextMenuContent } from "../song-actions";
 import { DropdownMenuNS as DropdownMenu } from "@/components/ui/dropdown-menu";
@@ -203,12 +206,15 @@ function RightControls() {
   const toggleMute = usePlayerStore((s) => s.toggleMute);
   const navigate = useRouterStore((s) => s.navigate);
   const volumeWheelStep = useSettingsStore((s) => s.playback.volumeWheelStep);
+  const miniViz = useHifiStore((s) => s.miniViz);
+  const hifiEnabled = useHifiStore((s) => s.enabled);
+  const toggleHifiPanel = useHifiUi((s) => s.toggle);
 
   const VolIcon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
   return (
     <div className="flex h-full flex-col items-end justify-center gap-2 pr-4">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         <button
           type="button"
           title="Auto DJ"
@@ -219,6 +225,21 @@ function RightControls() {
         </button>
       </div>
       <div className="flex items-center gap-1">
+        {miniViz ? (
+          <div className="mr-1 h-7 w-16 overflow-hidden rounded bg-black/30" data-testid="hifi-mini-viz">
+            <HifiVisualizer variant="mini" />
+          </div>
+        ) : null}
+        <button
+          type="button"
+          title="Hi-Fi Studio"
+          aria-label="Open Hi-Fi Studio"
+          data-testid="hifi-open-btn"
+          className={cn("fs-icon-btn p-1.5", hifiEnabled && "text-[var(--primary)]")}
+          onClick={toggleHifiPanel}
+        >
+          <AudioWaveform size={15} />
+        </button>
         <button
           type="button"
           title="Player settings"

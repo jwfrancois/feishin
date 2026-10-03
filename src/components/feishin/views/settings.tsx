@@ -6,6 +6,7 @@ import { THEMES, DEFAULT_THEME } from "@/lib/themes";
 import { useSettingsStore } from "@/store/settings-store";
 import { useAuthStore, type ServerType } from "@/store/auth-store";
 import { usePlayerStore } from "@/store/player-store";
+import { useHifiStore, useHifiUi } from "@/store/hifi-store";
 import { useRouterStore } from "@/store/router-store";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -108,6 +109,9 @@ function PlaybackSection() {
   const setPlayback = useSettingsStore((s) => s.setPlayback);
   const volume = usePlayerStore((s) => s.volume);
   const setVolume = usePlayerStore((s) => s.setVolume);
+  const hifiEnabled = useHifiStore((s) => s.enabled);
+  const setHifiEnabled = useHifiStore((s) => s.setEnabled);
+  const openHifi = useHifiUi((s) => s.setOpen);
 
   return (
     <div>
@@ -117,6 +121,19 @@ function PlaybackSection() {
           <option value="web" className="bg-[var(--elevated)]">Web player</option>
           <option value="mpv" disabled className="bg-[var(--elevated)]">MPV (desktop only)</option>
         </select>
+      </Row>
+      <Row title="Hi-Fi Studio sound system" description="Preamp, 10-band EQ, crossfeed, stereo imaging, dynamics and loudness normalization — open the studio from the waveform icon in the player bar">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => openHifi(true)}
+            className="rounded border border-[var(--border)] px-2.5 py-1.5 text-[12px] text-[var(--fg)] hover:bg-[var(--hover)]"
+            data-testid="settings-open-hifi"
+          >
+            Open studio
+          </button>
+          <Switch checked={hifiEnabled} onCheckedChange={setHifiEnabled} aria-label="Toggle Hi-Fi processing" />
+        </div>
       </Row>
       <Row title="Gapless playback" description="Play consecutive tracks without silence between them">
         <Switch checked={playback.gapless} onCheckedChange={(v) => setPlayback({ gapless: v })} />
