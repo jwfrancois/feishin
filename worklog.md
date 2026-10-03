@@ -189,3 +189,25 @@ Stage Summary:
 - Artist pages now combine library + internet: Wikipedia bio alongside the Jellyfin overview, and a MusicBrainz "From the internet" discography of releases not in the library.
 - Fanart.tv integrated as the first-choice artist-photo source with first-class API-key management (Settings field + env var + health-check key state); works the moment the user pastes their free personal key.
 - Health check verified the nas_share remount recovery; unraid_share still awaits a host-side remount (score recovers to ~92 automatically on the next check once done).
+
+---
+Task ID: 8
+Agent: main (Super Z)
+Task: Paste the user's Fanart.tv API key into .env and verify it end-to-end (artist photos + health probe)
+
+Work Log:
+- Pasted the user-provided Fanart.tv key into /home/z/my-project/.env as FANARTTV_API_KEY (alongside DATABASE_URL).
+- Security: discovered .env was TRACKED in git (committed before the .env* ignore rule existed; content at HEAD = DATABASE_URL only, no secrets). Ran git rm --cached .env so the file stays on disk but can never be pushed; the key therefore never enters git history (verified: git show HEAD:.env has no key).
+- Restarted the dev server so Next.js loads the new env var (bun run dev, port 3000 healthy).
+- Key validation: direct curl to webservice.fanart.tv/v3/music/<coldplay-mbid> -> HTTP 200 with data; assets.fanart.tv image fetch -> HTTP 200 (925 KB, 2.1s) so the fanart CDN is NOT blocked on this network (unlike Deezer's Akamai CDN).
+- Health re-probe (POST /api/agent/run {"job":"health"}): "Internet sources: 7/7 reachable - Fanart.tv: API key working". GET /api/agent/health serves the latest stored snapshot (does not re-run); scheduler re-checks every 5 min; a health run is recorded status="failed" BY DESIGN when the verdict is critical (error: null confirms no crash).
+- Live artist-photo test: GET /api/agent/enrichment/<coldplay-id>?kind=artwork&itemType=artist&name=Coldplay&fetch=1 -> status=found, source=fanart, 1000x1000 via assets.fanart.tv. Niche artists ((G)I-DLE, $uicideboy$) return null = legit no-coverage; deezer->wikipedia-thumbnail fallback chain handles them.
+- UI pipeline confirmed: all item images route through jfImageUrl -> /api/jf-img/<id>; on upstream miss tryAgentArtwork() serves the agent's fanart finding (X-Agent-Artwork header) with disk cache; Coldplay artist id served 200 image/jpeg via proxy.
+- Internet bio + discography re-verified live: Coldplay discography = 100 releases (6 library + 94 internet-only via MusicBrainz); bio path unchanged from Task 7.
+- Investigated dev.log "[agent] health (schedule) -> failed in 24s": benign - that's the critical-verdict recording, not a crash; score is 67 only because /mnt1/unraid_share is still unmounted on the Jellyfin server host (host-side action; score auto-recovers to ~92 on the next 5-min check).
+- False alarm resolved: the enrichment route's summary line looked corrupted ("eta.year") in tool output - display pipeline strips "[m" sequences (ANSI-escape-like); codepoint dump + balanced-bracket check prove the file was always correct ("[meta.year"). No code change made or needed this session.
+
+Stage Summary:
+- Fanart.tv API key is live from .env: health probe reports "API key working"; Coldplay artist photo fetched source=fanart (1000x1000) and served through the jf-img proxy pipeline.
+- .env untracked from git (key can never be pushed; history verified clean).
+- Health score holds at 67 solely due to the unmounted /mnt1/unraid_share on the server host; recovers to ~92 automatically on the next 5-min check after the user remounts it.
