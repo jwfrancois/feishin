@@ -89,14 +89,33 @@ The agent also **notices gaps as you browse**: whenever the image proxy serves a
 
 Rate-limiting: MusicBrainz is capped at 1 request/second with a descriptive User-Agent; other sources are gently throttled.
 
-### 2. Health monitoring
+### 2. Write-back — push the scraped knowledge into Jellyfin itself
+
+Findings are not limited to this app: the agent can **write metadata back into your Jellyfin server** so every Jellyfin client (mobile apps, smart TVs, other players) benefits too. Fill-if-missing policy — existing server values are **never overwritten**:
+
+| Kind | Written to | Guard |
+| --- | --- | --- |
+| Artist bio | `POST /Items/{id}` → `Overview` (+ "Source: Wikipedia" attribution) | only when the server has no overview |
+| Album / artist artwork | `POST /Items/{id}/Images/Primary` (binary upload) | only when the item has no primary image |
+| Album year & genres | `POST /Items/{id}` → `ProductionYear` / `Genres` | only when missing |
+| Lyrics | `POST /Audio/{id}/Lyrics?fileName=lyrics.lrc` (synced LRC parsed server-side) | only when no lyrics exist |
+
+Three modes (Agent → Settings → *Jellyfin write-back*):
+
+- **Off** — everything stays in-app.
+- **Manual** — per-finding "write" buttons plus a **"Write all to Jellyfin"** batch in the Enrichments tab; every attempt is tracked per finding (`in-app / on server / failed` with the server's error message).
+- **Automatic** — findings are written to the server right after each scan.
+
+Note: image uploads are stored by Jellyfin **next to the media** — while a media share is unmounted the server rejects them (HTTP 500) and the finding is marked `failed` with the reason; after remounting, "Write all to Jellyfin" retries them successfully. Bio/metadata/lyrics writes live in Jellyfin's database and are unaffected.
+
+### 3. Health monitoring
 
 Every 5 min (configurable) the agent records a health snapshot covering:
 
 - **Jellyfin server** — reachability, version, response latency
 - **Authentication** — user session / API-key validity
 - **Library index** — album/song totals
-- **Media files** — Range-probes random tracks to detect **unmounted media shares** (e.g. a NAS folder the server can no longer read)
+- **Media files** — Range-probes random tracks **grouped per share** (e.g. `/mnt/nas_share: 8/8 readable`, `/mnt1/unraid_share: 0/8 readable`) to pinpoint unmounted NAS shares; after a remount the score recovers automatically on the next check (recovery is called out explicitly, and a "Re-probe after remount" button forces an immediate re-check)
 - **Image pipeline** — samples upstream album art
 - **Internet sources** — reachability of MusicBrainz / Deezer / iTunes / CAA / Wikipedia / LRCLIB
 - **Agent database, artwork disk cache (300 MB cap), process memory & event-loop lag**
@@ -105,13 +124,14 @@ Each check reports `ok / warn / fail`, aggregated into an overall score (0–100
 
 ### Agent dashboard
 
-The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable), recent-run logs, and settings (intervals, batch size, per-source toggles, pause/resume). Manual "Health check" / "Scan library" triggers are available from the header.
+The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable, with per-finding server write-back), recent-run logs, and settings. Settings include scan frequency & batch size (numeric fields **plus quick preset chips** — 10/15/30/45/60/120 min, 8/16/32/64 items; changes apply within ~30 s), the write-back mode, per-source toggles, and pause/resume. Manual "Health check" / "Scan library" triggers are available from the header.
 
-REST endpoints: `GET /api/agent/status`, `POST /api/agent/run`, `GET /api/agent/findings`, `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`.
+REST endpoints: `GET /api/agent/status`, `POST /api/agent/run`, `GET /api/agent/findings`, `POST /api/agent/findings/[id]/apply`, `GET|POST /api/agent/writeback`, `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`.
 
 ## Known limitations
 
 - **Audio playback depends on the server's media share.** If a track's file can't be read by the Jellyfin server (unmounted music folder), the app detects the missing file, shows a "Skipped — unavailable on server" toast and auto-advances; after three consecutive failures it pauses to avoid churning through the queue. Fully readable shares stream and seek normally.
+- **Metadata/image write-back needs a writable server.** Artwork uploads fail (HTTP 500) while the destination share is unmounted — findings are marked `failed` with the server's message and can be retried after remounting. Artist bios, album years/genres and lyrics are stored in Jellyfin's database and work regardless. Deezer availability depends on the server's network (its CDN blocks some datacenter IPs).
 - **Image-less items get generated placeholders — until the agent finds real art.** Items without embedded/folder art (and items whose art lives on an offline share) are rendered as deterministic gradient initials tiles; the Library Agent queues them and replaces the tiles with internet-sourced covers once found.
 - **Star ratings are hidden on Jellyfin.** Jellyfin 10.11 removed the numeric 0–10 rating API (only like/dislike remains), and upstream Feishin shows star ratings for Navidrome/Subsonic only. This rebuild follows suit and uses Jellyfin's native like (`UserData.Likes`) instead.
 - **Genre counts** — Jellyfin 10.11's `/Genres` endpoint no longer exposes `ItemCount` and facets are ignored, so genre stripes show names only.

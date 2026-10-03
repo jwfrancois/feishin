@@ -8,6 +8,7 @@
 import { db } from "@/lib/db";
 import { jfJson, type JfFetchOptions } from "@/lib/jf-server";
 import { ensureConfig, updateConfig } from "../config";
+import { applyFindingToJellyfin } from "../writeback";
 import { dzSearchAlbum, dzArtistPicture, bestDzCover, type DeezerAlbum } from "../sources/deezer";
 import { itunesSearchAlbum, bestItunesArtwork, type ItunesAlbum } from "../sources/itunes";
 import { mbSearchReleaseGroup, mbSearchArtist, caaFrontUrl } from "../sources/musicbrainz";
@@ -81,7 +82,18 @@ async function resolveAlbumArtwork(name: string, artist: string, dz: DeezerAlbum
 
 // ---------------------------------------------------------------- album enrichment
 
-async function enrichAlbum(item: JfRawItem, log: RunLog, cfgSources: { deezer: boolean; itunes: boolean; musicbrainz: boolean }): Promise<{ enriched: number; missing: number }> {
+/** Push a freshly created finding into Jellyfin when write-back mode is "auto". */
+async function maybeAutoApply(findingId: string, log: RunLog, autoApply: boolean): Promise<void> {
+  if (!autoApply) return;
+  const r = await applyFindingToJellyfin(findingId).catch((err: unknown) => ({
+    ok: false as const,
+    detail: err instanceof Error ? err.message : "write-back error",
+  }));
+  if (r.ok && (r.detail.startsWith("skipped") || r.detail.startsWith("already"))) return; // server already has it — stay quiet
+  log.add(`  → Jellyfin: ${r.ok ? r.detail : `FAILED — ${r.detail}`}`);
+}
+
+async function enrichAlbum(item: JfRawItem, log: RunLog, cfgSources: { deezer: boolean; itunes: boolean; musicbrainz: boolean }, autoApply = false): Promise<{ enriched: number; missing: number }> {
   const name = item.Name ?? "";
   const artist = item.AlbumArtists?.[0]?.Name ?? "";
   let enriched = 0;
@@ -103,12 +115,13 @@ async function enrichAlbum(item: JfRawItem, log: RunLog, cfgSources: { deezer: b
   if (needsArt) {
     const hit = await resolveAlbumArtwork(name, artist, dz, it);
     if (hit) {
-      await db.agentFinding.upsert({
+      const finding = await db.agentFinding.upsert({
         where: { itemId_kind: { itemId: item.Id, kind: "artwork" } },
         update: { status: "found", source: hit.source, payload: JSON.stringify(hit), summary: `${hit.width}×${hit.height} cover via ${hit.source}`, itemName: name, itemSubtitle: artist, itemType: "album" },
         create: { itemId: item.Id, itemType: "album", itemName: name, itemSubtitle: artist, kind: "artwork", status: "found", source: hit.source, payload: JSON.stringify(hit), summary: `${hit.width}×${hit.height} cover via ${hit.source}` },
       });
       log.add(`artwork: "${name}" — ${hit.source}`);
+      await maybeAutoApply(finding.id, log, autoApply);
       enriched++;
     } else {
       await db.agentFinding.upsert({
@@ -130,12 +143,14 @@ async function enrichAlbum(item: JfRawItem, log: RunLog, cfgSources: { deezer: b
     const trackCount = dz?.nb_tracks ?? it?.trackCount ?? 0;
     const source = dz ? "deezer" : it ? "itunes" : "";
     if ((year || genres.length > 0 || trackCount > 0) && source) {
-      await db.agentFinding.upsert({
+      const summary = [year ? `Year ${year}` : "", genres.length ? `Genre ${genres[0]}` : "", trackCount ? `${trackCount} tracks` : ""].filter(Boolean).join(" · ") || "Metadata via " + source;
+      const finding = await db.agentFinding.upsert({
         where: { itemId_kind: { itemId: item.Id, kind: "metadata" } },
-        update: { status: "found", source, payload: JSON.stringify({ year: year ? Number(year) : undefined, genres, trackCount: trackCount || undefined }), summary: [year ? `Year ${year}` : "", genres.length ? `Genre ${genres[0]}` : "", trackCount ? `${trackCount} tracks` : ""].filter(Boolean).join(" · ") || "Metadata via " + source, itemName: name, itemSubtitle: artist, itemType: "album" },
-        create: { itemId: item.Id, itemType: "album", itemName: name, itemSubtitle: artist, kind: "metadata", status: "found", source, payload: JSON.stringify({ year: year ? Number(year) : undefined, genres, trackCount: trackCount || undefined }), summary: [year ? `Year ${year}` : "", genres.length ? `Genre ${genres[0]}` : "", trackCount ? `${trackCount} tracks` : ""].filter(Boolean).join(" · ") || "Metadata via " + source },
+        update: { status: "found", source, payload: JSON.stringify({ year: year ? Number(year) : undefined, genres, trackCount: trackCount || undefined }), summary, itemName: name, itemSubtitle: artist, itemType: "album" },
+        create: { itemId: item.Id, itemType: "album", itemName: name, itemSubtitle: artist, kind: "metadata", status: "found", source, payload: JSON.stringify({ year: year ? Number(year) : undefined, genres, trackCount: trackCount || undefined }), summary },
       });
       log.add(`metadata: "${name}" — ${[year, genres[0], trackCount ? `${trackCount} tracks` : ""].filter(Boolean).join(" / ") || source}`);
+      await maybeAutoApply(finding.id, log, autoApply);
       enriched++;
     } else {
       log.add(`metadata: "${name}" — not found`);
@@ -148,7 +163,7 @@ async function enrichAlbum(item: JfRawItem, log: RunLog, cfgSources: { deezer: b
 
 // ---------------------------------------------------------------- artist enrichment
 
-async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedia: boolean; deezer: boolean }): Promise<{ enriched: number; missing: number }> {
+async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedia: boolean; deezer: boolean; itunes: boolean }, autoApply = false): Promise<{ enriched: number; missing: number }> {
   const name = item.Name ?? "";
   let enriched = 0;
   let missing = 0;
@@ -158,12 +173,13 @@ async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedi
   if (needsBio) {
     const bio = await wikiArtistBio(name).catch(() => null);
     if (bio?.extract) {
-      await db.agentFinding.upsert({
+      const finding = await db.agentFinding.upsert({
         where: { itemId_kind: { itemId: item.Id, kind: "bio" } },
         update: { status: "found", source: "wikipedia", payload: JSON.stringify({ text: bio.extract, url: bio.pageUrl, thumbnailUrl: bio.thumbnailUrl }), summary: `${bio.extract.length} chars from Wikipedia`, itemName: name, itemType: "artist" },
         create: { itemId: item.Id, itemType: "artist", itemName: name, kind: "bio", status: "found", source: "wikipedia", payload: JSON.stringify({ text: bio.extract, url: bio.pageUrl, thumbnailUrl: bio.thumbnailUrl }), summary: `${bio.extract.length} chars from Wikipedia` },
       });
       log.add(`bio: "${name}" — wikipedia (${bio.extract.length} chars)`);
+      await maybeAutoApply(finding.id, log, autoApply);
       enriched++;
     } else {
       await db.agentFinding.upsert({
@@ -183,12 +199,13 @@ async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedi
       if (pic?.url) hit = { url: pic.url, source: "deezer", width: 1000, height: 1000 };
     }
     if (hit) {
-      await db.agentFinding.upsert({
+      const finding = await db.agentFinding.upsert({
         where: { itemId_kind: { itemId: item.Id, kind: "artwork" } },
         update: { status: "found", source: hit.source, payload: JSON.stringify(hit), summary: "Artist photo via " + hit.source, itemName: name, itemType: "artist" },
         create: { itemId: item.Id, itemType: "artist", itemName: name, kind: "artwork", status: "found", source: hit.source, payload: JSON.stringify(hit), summary: "Artist photo via " + hit.source },
       });
       log.add(`photo: "${name}" — ${hit.source}`);
+      await maybeAutoApply(finding.id, log, autoApply);
       enriched++;
     } else {
       log.add(`photo: "${name}" — not found`);
@@ -222,11 +239,11 @@ export async function runScanJob(): Promise<ScanResult> {
       if (!item?.Id) throw new Error("item not found");
       processed++;
       if (item.Type === "MusicArtist") {
-        const r = await enrichArtist({ ...item, Name: item.Name ?? p.itemName }, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer });
+        const r = await enrichArtist({ ...item, Name: item.Name ?? p.itemName }, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer, itunes: cfg.sources.itunes }, cfg.writeBack === "auto");
         enriched += r.enriched;
         missing += r.missing;
       } else {
-        const r = await enrichAlbum(item, log, { deezer: cfg.sources.deezer, itunes: cfg.sources.itunes, musicbrainz: cfg.sources.musicbrainz });
+        const r = await enrichAlbum(item, log, { deezer: cfg.sources.deezer, itunes: cfg.sources.itunes, musicbrainz: cfg.sources.musicbrainz }, cfg.writeBack === "auto");
         enriched += r.enriched;
         missing += r.missing;
       }
@@ -258,7 +275,7 @@ export async function runScanJob(): Promise<ScanResult> {
     log.add(`album batch: ${albums.length} random albums`);
     for (const album of albums) {
       try {
-        const r = await enrichAlbum(album, log, { deezer: cfg.sources.deezer, itunes: cfg.sources.itunes, musicbrainz: cfg.sources.musicbrainz });
+        const r = await enrichAlbum(album, log, { deezer: cfg.sources.deezer, itunes: cfg.sources.itunes, musicbrainz: cfg.sources.musicbrainz }, cfg.writeBack === "auto");
         enriched += r.enriched;
         missing += r.missing;
         processed++;
@@ -275,7 +292,7 @@ export async function runScanJob(): Promise<ScanResult> {
     log.add(`artist batch: ${artists.length} random artists`);
     for (const artist of artists) {
       try {
-        const r = await enrichArtist(artist, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer });
+        const r = await enrichArtist(artist, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer, itunes: cfg.sources.itunes }, cfg.writeBack === "auto");
         enriched += r.enriched;
         missing += r.missing;
         processed++;

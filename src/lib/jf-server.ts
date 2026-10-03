@@ -149,10 +149,35 @@ function authHeaders(): Record<string, string> {
 }
 
 export interface JfFetchOptions {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "DELETE" | "PUT";
   params?: URLSearchParams;
   body?: unknown;
   extraHeaders?: Record<string, string>;
+}
+
+/** Binary-body request (image/lyrics uploads). Authenticates, retries once on 401,
+ *  but never assumes JSON — callers inspect the raw Response. */
+export async function jfRaw(
+  path: string,
+  opts: { method?: "POST" | "PUT" | "DELETE"; params?: URLSearchParams; contentType?: string; body?: string | Uint8Array | ArrayBuffer } = {},
+): Promise<Response> {
+  await ensureAuthenticated();
+  const doFetch = (): Promise<Response> =>
+    fetch(apiUrl(path, opts.params), {
+      method: opts.method ?? "POST",
+      headers: {
+        ...authHeaders(),
+        ...(opts.contentType ? { "Content-Type": opts.contentType } : {}),
+      },
+      body: opts.body as BodyInit | undefined,
+      signal: AbortSignal.timeout(120_000),
+    });
+  let res = await doFetch();
+  if (res.status === 401) {
+    await ensureAuthenticated(true);
+    res = await doFetch();
+  }
+  return res;
 }
 
 /** Low-level authenticated fetch against the configured Jellyfin server. Retries once on 401. */

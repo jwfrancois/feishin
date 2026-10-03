@@ -18,6 +18,8 @@ import {
   Clock,
   Pause,
   Play,
+  CloudUpload,
+  HardDrive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -30,6 +32,7 @@ interface HealthCheck {
   status: "ok" | "warn" | "fail";
   latencyMs: number;
   detail: string;
+  shares?: { path: string; readable: number; total: number }[];
 }
 
 interface AgentRunRow {
@@ -52,6 +55,7 @@ interface AgentStatus {
     scanIntervalMin: number;
     healthIntervalMin: number;
     batchSize: number;
+    writeBack: string;
     sources: Record<string, boolean>;
     lastStage: string;
   };
@@ -88,6 +92,8 @@ interface FindingRow {
   source: string;
   status: string;
   summary: string;
+  serverStatus: string;
+  serverError?: string | null;
   updatedAt: string;
 }
 
@@ -168,6 +174,8 @@ export function AgentView() {
   const [kindFilter, setKindFilter] = useState<string>("");
   const [tab, setTab] = useState<"health" | "enrichments" | "activity" | "settings">("health");
   const [busy, setBusy] = useState<string>("");
+  const [applying, setApplying] = useState<string>("");
+  const [batchBusy, setBatchBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -271,6 +279,68 @@ export function AgentView() {
     }
   };
 
+  const applyOne = async (f: FindingRow) => {
+    setApplying(f.id);
+    try {
+      const res = await fetch(`/api/agent/findings/${f.id}/apply`, { method: "POST" });
+      const data = (await res.json()) as { ok: boolean; result?: { ok: boolean; detail: string }; error?: string };
+      if (data.result?.ok) {
+        toast.success(`Written to Jellyfin — ${data.result.detail}`, { duration: 3500 });
+      } else {
+        toast.error(`${data.result?.detail ?? data.error ?? "Write-back failed"}`, { duration: 4500 });
+      }
+      await loadFindings();
+      await loadStatus();
+    } catch {
+      toast.error("Agent unreachable");
+    } finally {
+      setApplying("");
+    }
+  };
+
+  const applyAll = async () => {
+    if (batchBusy) return;
+    setBatchBusy(true);
+    try {
+      const res = await fetch("/api/agent/writeback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 40 }),
+      });
+      const data = (await res.json()) as { ok: boolean; started?: boolean; error?: string };
+      if (!data.ok) {
+        toast.error(data.error ?? "Could not start write-back");
+        setBatchBusy(false);
+        return;
+      }
+      toast("Write-back batch started — writing scraped data into Jellyfin…", { duration: 3000 });
+      const poll = setInterval(() => {
+        void (async () => {
+          try {
+            const st = await fetch("/api/agent/writeback", { cache: "no-store" });
+            const s = (await st.json()) as { ok: boolean; running: boolean };
+            if (!s.running) {
+              clearInterval(poll);
+              setBatchBusy(false);
+              await loadFindings();
+              await loadStatus();
+              toast.success("Write-back batch finished", { duration: 2500 });
+            }
+          } catch {
+            /* keep polling */
+          }
+        })();
+      }, 2_500);
+      setTimeout(() => {
+        clearInterval(poll);
+        setBatchBusy(false);
+      }, 240_000);
+    } catch {
+      toast.error("Agent unreachable");
+      setBatchBusy(false);
+    }
+  };
+
   if (!status) {
     return (
       <div className="px-8 pb-24 pt-8" data-testid="agent-view-loading">
@@ -290,6 +360,7 @@ export function AgentView() {
   const foundArtwork = (status.findingCounts.artwork?.found ?? 0) + (status.findingCounts.artwork?.applied ?? 0);
   const foundBios = status.findingCounts.bio?.found ?? 0;
   const foundMeta = status.findingCounts.metadata?.found ?? 0;
+  void runs;
 
   return (
     <div className="px-8 pb-24 pt-8" data-testid="agent-view">
@@ -407,6 +478,34 @@ export function AgentView() {
                         {c.latencyMs > 0 && <span className="text-[11px] text-[var(--fg-dim)]">{c.latencyMs} ms</span>}
                       </div>
                       <div className="text-[12px] leading-snug text-[var(--fg-dim)]">{c.detail}</div>
+                      {c.name === "Media files" && c.shares && c.shares.length > 0 && (
+                        <div className="mt-1.5 flex flex-col gap-1">
+                          {c.shares.map((s) => (
+                            <div key={s.path} className="flex items-center gap-2 text-[11.5px]">
+                              <HardDrive size={11} className="shrink-0 text-[var(--fg-dim)]" />
+                              <code className="text-[var(--fg)]">{s.path}</code>
+                              <span className="ml-auto whitespace-nowrap text-[var(--fg-dim)]">
+                                {s.readable}/{s.total} readable
+                              </span>
+                            </div>
+                          ))}
+                          {c.status !== "ok" && (
+                            <div className="mt-1 flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="fs-pill !py-1 text-[11px]"
+                                onClick={() => void trigger("health")}
+                                disabled={busy !== "" || status.running.health}
+                                title="Remount the share on your NAS, then re-probe — the score recovers automatically"
+                              >
+                                <RefreshCw size={11} className={cn(status.running.health && "fs-spin")} />
+                                Re-probe after remount
+                              </button>
+                              <span className="text-[11px] text-[var(--fg-dim)]">remount the share, then the score recovers on the next check</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -442,6 +541,16 @@ export function AgentView() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className="fs-pill !py-1.5"
+              onClick={() => void applyAll()}
+              disabled={batchBusy}
+              title="Write every scraped finding (not yet synced) into the Jellyfin server itself"
+            >
+              <CloudUpload size={13} className={cn(batchBusy && "fs-spin")} />
+              {batchBusy ? "Writing…" : "Write all to Jellyfin"}
+            </button>
             <button type="button" className="fs-pill !py-1.5" onClick={() => void loadFindings()}>
               <RefreshCw size={13} />
               Refresh
@@ -460,37 +569,69 @@ export function AgentView() {
                     <th className="px-2 py-2">Kind</th>
                     <th className="px-2 py-2">Source</th>
                     <th className="px-2 py-2">Status</th>
+                    <th className="px-2 py-2">Server</th>
                     <th className="px-2 py-2">Detail</th>
                     <th className="px-2 py-2">Updated</th>
+                    <th className="px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {findings.map((f) => (
-                    <tr key={f.id} className="border-t border-[var(--border)]">
-                      <td className="max-w-[220px] px-2 py-2">
-                        <div className="truncate font-semibold text-[var(--fg)]">{f.itemName || f.itemId}</div>
-                        {f.itemSubtitle && <div className="truncate text-[11px] text-[var(--fg-dim)]">{f.itemSubtitle}</div>}
-                      </td>
-                      <td className="px-2 py-2">
-                        <span className="flex items-center gap-1.5 text-[var(--fg-dim)]">
-                          {KIND_META[f.kind]?.icon}
-                          {KIND_META[f.kind]?.label ?? f.kind}
-                        </span>
-                      </td>
-                      <td className="px-2 py-2 text-[var(--fg-dim)]">{SOURCE_LABELS[f.source] ?? f.source ?? "—"}</td>
-                      <td className="px-2 py-2">
-                        <Pill tone={f.status === "found" || f.status === "applied" ? "good" : f.status === "pending" ? "warn" : "neutral"}>{f.status}</Pill>
-                      </td>
-                      <td className="max-w-[280px] truncate px-2 py-2 text-[var(--fg-dim)]" title={f.summary}>
-                        {f.summary || "—"}
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-2 text-[11.5px] text-[var(--fg-dim)]">{timeAgo(f.updatedAt)}</td>
-                    </tr>
-                  ))}
+                  {findings.map((f) => {
+                    const writable = (f.status === "found" || f.status === "applied") && f.serverStatus !== "synced";
+                    return (
+                      <tr key={f.id} className="border-t border-[var(--border)]">
+                        <td className="max-w-[200px] px-2 py-2">
+                          <div className="truncate font-semibold text-[var(--fg)]">{f.itemName || f.itemId}</div>
+                          {f.itemSubtitle && <div className="truncate text-[11px] text-[var(--fg-dim)]">{f.itemSubtitle}</div>}
+                        </td>
+                        <td className="px-2 py-2">
+                          <span className="flex items-center gap-1.5 text-[var(--fg-dim)]">
+                            {KIND_META[f.kind]?.icon}
+                            {KIND_META[f.kind]?.label ?? f.kind}
+                          </span>
+                        </td>
+                        <td className="px-2 py-2 text-[var(--fg-dim)]">{SOURCE_LABELS[f.source] ?? f.source ?? "—"}</td>
+                        <td className="px-2 py-2">
+                          <Pill tone={f.status === "found" || f.status === "applied" ? "good" : f.status === "pending" ? "warn" : "neutral"}>{f.status}</Pill>
+                        </td>
+                        <td className="px-2 py-2">
+                          <span title={f.serverError ?? undefined}>
+                            <Pill tone={f.serverStatus === "synced" ? "good" : f.serverStatus === "failed" ? "bad" : "neutral"}>
+                              {f.serverStatus === "synced" ? "on server" : f.serverStatus === "failed" ? "failed" : "in-app"}
+                            </Pill>
+                          </span>
+                        </td>
+                        <td className="max-w-[240px] truncate px-2 py-2 text-[var(--fg-dim)]" title={f.summary}>
+                          {f.summary || "—"}
+                        </td>
+                        <td className="whitespace-nowrap px-2 py-2 text-[11.5px] text-[var(--fg-dim)]">{timeAgo(f.updatedAt)}</td>
+                        <td className="px-2 py-2 text-right">
+                          {writable ? (
+                            <button
+                              type="button"
+                              className="fs-pill !py-1 text-[11px]"
+                              onClick={() => void applyOne(f)}
+                              disabled={applying !== "" || batchBusy}
+                              title="Write this finding into the Jellyfin server (bio → overview, artwork → primary image, metadata → year/genres, lyrics)"
+                            >
+                              <CloudUpload size={11} className={cn(applying === f.id && "fs-spin")} />
+                              {applying === f.id ? "writing" : "write"}
+                            </button>
+                          ) : f.serverStatus === "synced" ? (
+                            <span className="text-[11px] text-emerald-400">✓</span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
+          <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--fg-dim)]">
+            <b className="text-[var(--fg)]">Server write-back</b> pushes scraped data into Jellyfin itself (artist bios, album/artist artwork, year &amp;
+            genres, lyrics) so every Jellyfin client benefits. Fill-if-missing: the agent never overwrites values the server already has.
+          </p>
         </div>
       )}
 
@@ -518,7 +659,10 @@ export function AgentView() {
       {tab === "settings" && (
         <div className="grid max-w-3xl gap-4" data-testid="agent-settings-tab">
           <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
-            <h3 className="mb-3 text-[14px] font-extrabold text-[var(--fg)]">Schedule</h3>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[14px] font-extrabold text-[var(--fg)]">Scan frequency &amp; batch size</h3>
+              <span className="text-[11px] text-[var(--fg-dim)]">changes apply within ~30 s</span>
+            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <NumberField
                 label="Health interval (min)"
@@ -530,6 +674,66 @@ export function AgentView() {
               <NumberField label="Scan interval (min)" value={cfg.scanIntervalMin} min={1} max={1440} onCommit={(v) => void patchConfig({ scanIntervalMin: v })} />
               <NumberField label="Items per scan" value={cfg.batchSize} min={1} max={100} onCommit={(v) => void patchConfig({ batchSize: v })} />
             </div>
+            <div className="mt-4 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fg-dim)]">Scan every</span>
+                {[10, 15, 30, 45, 60, 120].map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => void patchConfig({ scanIntervalMin: m })}
+                    className={cn("fs-pill !py-1 text-[11px]", cfg.scanIntervalMin === m && "!bg-[var(--primary)]/20 !text-[var(--primary)]")}
+                  >
+                    {m < 60 ? `${m} min` : `${m / 60} h`}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fg-dim)]">Batch size</span>
+                {[8, 16, 32, 64].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => void patchConfig({ batchSize: n })}
+                    className={cn("fs-pill !py-1 text-[11px]", cfg.batchSize === n && "!bg-[var(--primary)]/20 !text-[var(--primary)]")}
+                  >
+                    {n} items
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+            <h3 className="mb-1 text-[14px] font-extrabold text-[var(--fg)]">Jellyfin write-back</h3>
+            <p className="mb-3 text-[12px] leading-relaxed text-[var(--fg-dim)]">
+              Push scraped data into the Jellyfin server itself — artist bios (overview), album &amp; artist artwork (primary image), album year &amp; genres,
+              synced lyrics — so every Jellyfin client benefits, not just this app. Fill-if-missing: existing server values are never overwritten.
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { key: "off", label: "Off", hint: "app-only" },
+                { key: "manual", label: "Manual", hint: "buttons in Enrichments" },
+                { key: "auto", label: "Automatic", hint: "applied during scans" },
+              ] as const).map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => void patchConfig({ writeBack: m.key })}
+                  className={cn(
+                    "flex flex-col items-start gap-0.5 rounded-[4px] border px-3 py-2.5 text-left transition-colors",
+                    cfg.writeBack === m.key
+                      ? "border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--fg)]"
+                      : "border-[var(--border)] bg-[var(--bg)] text-[var(--fg-dim)] hover:bg-[var(--hover)]",
+                  )}
+                >
+                  <span className="text-[13px] font-bold">{m.label}</span>
+                  <span className="text-[11px] text-[var(--fg-dim)]">{m.hint}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--fg-dim)]">
+              Image uploads require a writable Jellyfin metadata folder; failures are surfaced per finding in the Enrichments tab.
+            </p>
           </div>
           <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
             <h3 className="mb-1 text-[14px] font-extrabold text-[var(--fg)]">Internet sources</h3>
@@ -555,6 +759,10 @@ export function AgentView() {
               <li>Artist pages without a bio get a Wikipedia biography with attribution.</li>
               <li>Tracks without lyrics get synced/plain lyrics from LRCLIB on playback.</li>
               <li>Albums missing year/genre/track-count get metadata from Deezer/iTunes/MusicBrainz.</li>
+              <li>
+                With write-back enabled, all of the above is also written into Jellyfin itself — permanent, and visible in every client (music players,
+                smart TVs, mobile apps) that talks to your server.
+              </li>
             </ul>
           </div>
         </div>

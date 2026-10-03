@@ -144,3 +144,27 @@ Work Log:
 Stage Summary:
 - The app now has an autonomous library manager: it fills artwork/bio/metadata/lyrics gaps from the internet (rate-limited, attributed) and reports real system health (including the user's unmounted media share — surfaced as critical with details).
 - New files: src/instrumentation.ts, src/lib/agent/{http,config,scheduler}.ts, src/lib/agent/sources/{musicbrainz,deezer,itunes,wikipedia,lrclib}.ts, src/lib/agent/jobs/{scan,health}.ts, src/app/api/agent/* (6 routes), src/components/feishin/views/agent.tsx, src/lib/agent-client.ts; prisma/schema.prisma replaced; db at db/custom.db (gitignored).
+
+---
+Task ID: 6
+Agent: main (Super Z)
+Task: Agent upgrades per user: (a) NAS share remount -> health recovery, (b) write metadata back into Jellyfin, (c) tune scan frequency/batch size in Settings
+
+Work Log:
+- Health job now groups media-file probes per share (8 random tracks, /mnt root buckets), calls out recovery vs the previous snapshot ("share back online — recovered"), hints "remount them; the score recovers on the next check", and the dashboard Media files card lists per-share readable counts + a "Re-probe after remount" button.
+- Schema: AgentFinding + serverStatus/serverError/serverSyncedAt (+ index), AgentConfig + writeBack (off|manual|auto, default manual). db:push + generate OK (dev server restarted to pick up regenerated client).
+- jf-server.ts: new jfRaw() binary-body helper (auth, 401 retry, custom content-type, query params); JfFetchOptions gained PUT.
+- New src/lib/agent/writeback.ts: applyFindingToJellyfin + applyBatchToJellyfin (globalThis batch flag, 350 ms spacing). Fill-if-missing writers: bio -> POST /Items/{id} Overview + Wikipedia attribution (only if empty); artwork -> POST /Items/{id}/Images/Primary binary upload (only if no Primary tag); metadata -> ProductionYear/Genres (only if missing); lyrics -> POST /Audio/{id}/Lyrics?fileName=lyrics.lrc with raw LRC text (LyricDto JSON rejected with fileName-required 400; /Items/{id}/Lyrics is 404 on 10.11 — lyrics are Audio-scoped). Results tracked per finding; successful applies invalidate the jf cache.
+- New routes: POST /api/agent/findings/[id]/apply (single), GET|POST /api/agent/writeback (batch, fire-and-forget, running flag poll).
+- Scan job: auto-apply when config.writeBack==="auto" (maybeAutoApply logs "→ Jellyfin:" lines incl. failures); findings API exposes serverStatus/serverError.
+- Dashboard: Enrichments table gained Server column (in-app/on server/failed + tooltip) and per-row write buttons + "Write all to Jellyfin" batch button with poll-til-done; Settings gained "Jellyfin write-back" 3-way control and preset chips for scan interval (10/15/30/45/60/120 min) + batch size (8/16/32/64); health card shows per-share breakdown.
+- Verified LIVE against real server: metadata "Own It" -> year 2018/genres Christian persisted on server (idempotent re-apply skips); bio "Damae" -> 967-char Wikipedia overview + attribution on server; lyrics "I'm Like A Bird" -> 62 synced LRC lines stored server-side (Start ticks verified); batch of 5 -> +4 artist bios synced; auto scan run -> write-back attempted and honestly failed on dead-share artwork; artwork upload to imageless album on /mnt1/unraid_share fails 500 (Jellyfin cannot save next to media on the unmounted share — request itself is correct; will succeed after remount; skip-guard proven against album that already had art).
+- Discoveries: Deezer CDN (Akamai) 403-blocks this sandbox IP (health check shows sources reachable via root GET, but search API blocked — documented); all imageless albums belong to the dead share; POST /Items/{id} metadata lives in the DB so it works despite the dead share.
+- agent-browser e2e: Agent view renders new Server column, write buttons, batch button, per-share health rows, re-probe button, settings presets + write-back control; preset 30 min + writeBack=auto clicked and persisted via API; zero page errors / zero console errors. tsc src clean; eslint clean.
+- README: write-back section (table of kinds, modes, remount caveat), health per-share + recovery, settings presets, new endpoints, known limitations updated.
+- Left configured: writeBack=auto (user asked for server write-back), scanInterval=30 min.
+
+Stage Summary:
+- The agent now writes scraped bios/metadata/lyrics/artwork back INTO Jellyfin (fill-if-missing, tracked, retryable) — proven end-to-end against the live server.
+- NAS share recovery is first-class: per-share readability, recovery detection, re-probe button; score recovers on the next check after remount.
+- Scan frequency/batch size tunable via number fields AND presets; changes take effect within ~30 s.

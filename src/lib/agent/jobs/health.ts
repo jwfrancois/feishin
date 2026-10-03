@@ -11,11 +11,18 @@ import { agentFetch } from "../http";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
+export interface ShareHealth {
+  path: string;
+  readable: number;
+  total: number;
+}
+
 export interface HealthCheck {
   name: string;
   status: CheckStatus;
   latencyMs: number;
   detail: string;
+  shares?: ShareHealth[]; // per-share readability (media files check only)
 }
 
 export interface HealthResult {
@@ -104,19 +111,32 @@ async function checkLibraryCounts(): Promise<HealthCheck & { albums: number; son
   }
 }
 
-/** Sample random tracks and Range-probe them to detect unmounted media shares. */
+/** Sample random tracks and Range-probe them to detect unmounted media shares.
+ *  Results are grouped per share root (e.g. /mnt/nas_share, /mnt1/unraid_share)
+ *  so a remount on one share is visible — and recovery vs. the previous snapshot
+ *  is called out explicitly. */
 async function checkMediaReadable(): Promise<HealthCheck & { fraction: number }> {
   try {
+    // previous readability, for recovery detection ("share remounted -> score recovers")
+    const prev = await db.healthSnapshot
+      .findFirst({ orderBy: { id: "desc" }, select: { mediaReadable: true } })
+      .catch(() => null);
+
     const data = (await jfJson("Items", {
-      params: new URLSearchParams({ includeItemTypes: "Audio", recursive: "true", sortBy: "Random", limit: "7", fields: "Path" }),
+      params: new URLSearchParams({ includeItemTypes: "Audio", recursive: "true", sortBy: "Random", limit: "10", fields: "Path" }),
     })) as { Items?: { Id: string; Path?: string }[] };
-    const samples = (data.Items ?? []).slice(0, 6);
+    const samples = (data.Items ?? []).slice(0, 8);
     if (samples.length === 0) {
       return { name: "Media files", status: "warn", latencyMs: 0, detail: "No tracks sampled", fraction: 0 };
     }
+    const perShare = new Map<string, { readable: number; total: number }>();
+    const shareOf = (p?: string) => (p ? p.split("/").slice(0, 3).join("/") : "unknown");
     let readable = 0;
     let ttfb = 0;
     for (const item of samples) {
+      const share = shareOf(item.Path);
+      const bucket = perShare.get(share) ?? { readable: 0, total: 0 };
+      bucket.total++;
       try {
         const t0 = Date.now();
         const res = await jfFetch(`Audio/${item.Id}`, { extraHeaders: { Range: "bytes=0-1" } });
@@ -125,19 +145,29 @@ async function checkMediaReadable(): Promise<HealthCheck & { fraction: number }>
         if (res.status === 206 || res.status === 200) {
           readable++;
           ttfb += ms;
+          bucket.readable++;
         }
       } catch {
         /* unreadable sample */
       }
+      perShare.set(share, bucket);
     }
     const fraction = readable / samples.length;
-    const shareHints = [...new Set(samples.map((s) => s.Path?.split("/").slice(0, 3).join("/")).filter(Boolean))];
+    const shares: ShareHealth[] = [...perShare.entries()]
+      .map(([path, b]) => ({ path, readable: b.readable, total: b.total }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    const offlineShares = shares.filter((s) => s.readable === 0).map((s) => s.path);
+    const recovered = !!prev && prev.mediaReadable < 0.99 && fraction >= 0.99;
+    let detail = `${readable}/${samples.length} sampled tracks streamable`;
+    if (offlineShares.length) detail += ` — shares offline: ${offlineShares.join(", ")} (remount them; the score recovers on the next check)`;
+    else if (fraction < 1) detail += ` — some tracks unreachable`;
+    if (recovered) detail += " · share back online — recovered since last check";
     return {
       name: "Media files",
       status: fraction === 1 ? "ok" : fraction === 0 ? "fail" : "warn",
       latencyMs: readable > 0 ? Math.round(ttfb / readable) : 0,
-      detail: `${readable}/${samples.length} sampled tracks streamable${fraction < 1 ? ` — shares offline: ${shareHints.join(", ")}` : ""}`,
-      fraction,
+      detail,
+      shares,
     } as HealthCheck & { fraction: number };
   } catch (err) {
     return {

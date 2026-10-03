@@ -1,0 +1,648 @@
+     1→"use client";
+     2→// Feishin rebuild — Library Agent dashboard.
+     3→// The cloud agent that services the media library: scrapes the internet for
+     4→// metadata/art/bios/lyrics and monitors system health. This view is its cockpit.
+     5→import { useCallback, useEffect, useRef, useState } from "react";
+     6→import {
+     7→  Bot,
+     8→  RefreshCw,
+     9→  HeartPulse,
+    10→  Globe,
+    11→  Image as ImageIcon,
+    12→  BookOpenText,
+    13→  Music4,
+    14→  Database,
+    15→  CheckCircle2,
+    16→  AlertTriangle,
+    17→  XCircle,
+    18→  Clock,
+    19→  Pause,
+    20→  Play,
+    21→} from "lucide-react";
+    22→import { cn } from "@/lib/utils";
+    23→import { toast } from "sonner";
+    24→import { formatDistanceToNow } from "date-fns";
+    25→
+    26→// ---------------------------------------------------------------- types
+    27→
+    28→interface HealthCheck {
+    29→  name: string;
+    30→  status: "ok" | "warn" | "fail";
+    31→  latencyMs: number;
+    32→  detail: string;
+    33→}
+    34→
+    35→interface AgentRunRow {
+    36→  id: string;
+    37→  jobType: string;
+    38→  status: string;
+    39→  startedAt: string;
+    40→  finishedAt?: string | null;
+    41→  durationMs?: number | null;
+    42→  processed: number;
+    43→  enriched: number;
+    44→  missing: number;
+    45→  error?: string | null;
+    46→  log?: string | null;
+    47→}
+    48→
+    49→interface AgentStatus {
+    50→  config: {
+    51→    enabled: boolean;
+    52→    scanIntervalMin: number;
+    53→    healthIntervalMin: number;
+    54→    batchSize: number;
+    55→    sources: Record<string, boolean>;
+    56→    lastStage: string;
+    57→  };
+    58→  runtime: { startedAt: number; booted: boolean; running: string[]; lastTick: number; timerAlive: boolean };
+    59→  running: { health: boolean; scan: boolean };
+    60→  lastHealthRun: AgentRunRow | null;
+    61→  lastScanRun: AgentRunRow | null;
+    62→  latestHealth: {
+    63→    id: string;
+    64→    overall: string;
+    65→    score: number;
+    66→    checks: HealthCheck[];
+    67→    serverName: string;
+    68→    serverVersion: string;
+    69→    serverLatency: number;
+    70→    albumCount: number;
+    71→    songCount: number;
+    72→    mediaReadable: number;
+    73→    cacheMb: number;
+    74→    memoryMb: number;
+    75→    internetOk: boolean;
+    76→  } | null;
+    77→  findingCounts: Record<string, Record<string, number>>;
+    78→  pendingCount: number;
+    79→}
+    80→
+    81→interface FindingRow {
+    82→  id: string;
+    83→  itemId: string;
+    84→  itemType: string;
+    85→  itemName: string;
+    86→  itemSubtitle: string;
+    87→  kind: string;
+    88→  source: string;
+    89→  status: string;
+    90→  summary: string;
+    91→  updatedAt: string;
+    92→}
+    93→
+    94→interface HistoryPoint {
+    95→  id: string;
+    96→  overall: string;
+    97→  score: number;
+    98→  serverLatency: number;
+    99→  mediaReadable: number;
+   100→  memoryMb: number;
+   101→}
+   102→
+   103→const KIND_META: Record<string, { label: string; icon: React.ReactNode }> = {
+   104→  artwork: { label: "Artwork", icon: <ImageIcon size={13} /> },
+   105→  bio: { label: "Biography", icon: <BookOpenText size={13} /> },
+   106→  metadata: { label: "Metadata", icon: <Database size={13} /> },
+   107→  lyrics: { label: "Lyrics", icon: <Music4 size={13} /> },
+   108→};
+   109→
+   110→const SOURCE_LABELS: Record<string, string> = {
+   111→  deezer: "Deezer",
+   112→  itunes: "iTunes",
+   113→  coverart: "Cover Art Archive",
+   114→  musicbrainz: "MusicBrainz",
+   115→  wikipedia: "Wikipedia",
+   116→  lrclib: "LRCLIB",
+   117→};
+   118→
+   119→// ---------------------------------------------------------------- small pieces
+   120→
+   121→function StatusIcon({ status }: { status: "ok" | "warn" | "fail" | string }) {
+   122→  if (status === "ok") return <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />;
+   123→  if (status === "warn") return <AlertTriangle size={15} className="shrink-0 text-amber-400" />;
+   124→  return <XCircle size={15} className="shrink-0 text-red-400" />;
+   125→}
+   126→
+   127→function Pill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warn" | "bad" | "accent" }) {
+   128→  const tones = {
+   129→    neutral: "bg-[var(--elevated)] text-[var(--fg-dim)]",
+   130→    good: "bg-emerald-500/15 text-emerald-400",
+   131→    warn: "bg-amber-500/15 text-amber-400",
+   132→    bad: "bg-red-500/15 text-red-400",
+   133→    accent: "bg-[var(--primary)]/15 text-[var(--primary)]",
+   134→  };
+   135→  return <span className={cn("rounded-[4px] px-2 py-0.5 text-[11px] font-bold", tones[tone])}>{children}</span>;
+   136→}
+   137→
+   138→function StatCard({ label, value, sub, icon }: { label: string; value: React.ReactNode; sub?: string; icon?: React.ReactNode }) {
+   139→  return (
+   140→    <div className="flex items-center gap-3 rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+   141→      {icon && <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] bg-[var(--bg)] text-[var(--primary)]">{icon}</div>}
+   142→      <div className="min-w-0">
+   143→        <div className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fg-dim)]">{label}</div>
+   144→        <div className="truncate text-[19px] font-black leading-tight text-[var(--fg)]">{value}</div>
+   145→        {sub && <div className="truncate text-[11.5px] text-[var(--fg-dim)]">{sub}</div>}
+   146→      </div>
+   147→    </div>
+   148→  );
+   149→}
+   150→
+   151→function timeAgo(iso?: string | number | null): string {
+   152→  if (!iso) return "never";
+   153→  try {
+   154→    return formatDistanceToNow(typeof iso === "number" ? new Date(iso) : new Date(iso), { addSuffix: true });
+   155→  } catch {
+   156→    return "unknown";
+   157→  }
+   158→}
+   159→
+   160→// ---------------------------------------------------------------- main view
+   161→
+   162→export function AgentView() {
+   163→  const [status, setStatus] = useState<AgentStatus | null>(null);
+   164→  const [findings, setFindings] = useState<FindingRow[]>([]);
+   165→  const [findingsTotal, setFindingsTotal] = useState(0);
+   166→  const [history, setHistory] = useState<HistoryPoint[]>([]);
+   167→  const [runs, setRuns] = useState<AgentRunRow[]>([]);
+   168→  const [kindFilter, setKindFilter] = useState<string>("");
+   169→  const [tab, setTab] = useState<"health" | "enrichments" | "activity" | "settings">("health");
+   170→  const [busy, setBusy] = useState<string>("");
+   171→  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+   172→
+   173→  const loadStatus = useCallback(async () => {
+   174→    try {
+   175→      const res = await fetch("/api/agent/status", { cache: "no-store" });
+   176→      if (res.ok) {
+   177→        const data = (await res.json()) as { ok: boolean } & AgentStatus;
+   178→        if (data.ok) setStatus(data);
+   179→      }
+   180→    } catch {
+   181→      /* transient */
+   182→    }
+   183→  }, []);
+   184→
+   185→  const loadFindings = useCallback(async () => {
+   186→    try {
+   187→      const qs = new URLSearchParams({ limit: "80" });
+   188→      if (kindFilter) qs.set("kind", kindFilter);
+   189→      const res = await fetch(`/api/agent/findings?${qs}`, { cache: "no-store" });
+   190→      if (res.ok) {
+   191→        const data = (await res.json()) as { ok: boolean; total: number; items: FindingRow[] };
+   192→        if (data.ok) {
+   193→          setFindings(data.items);
+   194→          setFindingsTotal(data.total);
+   195→        }
+   196→      }
+   197→    } catch {
+   198→      /* transient */
+   199→    }
+   200→  }, [kindFilter]);
+   201→
+   202→  const loadHistory = useCallback(async () => {
+   203→    try {
+   204→      const res = await fetch("/api/agent/health?history=60", { cache: "no-store" });
+   205→      if (res.ok) {
+   206→        const data = (await res.json()) as { ok: boolean; history: HistoryPoint[] };
+   207→        if (data.ok) setHistory(data.history);
+   208→      }
+   209→    } catch {
+   210→      /* transient */
+   211→    }
+   212→  }, []);
+   213→
+   214→  const loadRuns = useCallback(async () => {
+   215→    try {
+   216→      const res = await fetch("/api/agent/status", { cache: "no-store" });
+   217→      void res;
+   218→      // runs come from the status endpoint's last* fields; full history via runs query below
+   219→    } catch {
+   220→      /* transient */
+   221→    }
+   222→  }, []);
+   223→
+   224→  useEffect(() => {
+   225→    void loadStatus();
+   226→    void loadFindings();
+   227→    void loadHistory();
+   228→    pollRef.current = setInterval(() => void loadStatus(), 5_000);
+   229→    return () => {
+   230→      if (pollRef.current) clearInterval(pollRef.current);
+   231→    };
+   232→  }, [loadStatus, loadFindings, loadHistory]);
+   233→
+   234→  useEffect(() => {
+   235→    void loadFindings();
+   236→  }, [kindFilter, loadFindings]);
+   237→
+   238→  const trigger = async (job: "health" | "scan") => {
+   239→    setBusy(job);
+   240→    try {
+   241→      const res = await fetch("/api/agent/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job }) });
+   242→      const data = (await res.json()) as { ok: boolean; started?: boolean; error?: string };
+   243→      if (data.ok) {
+   244→        toast(data.started ? `${job === "scan" ? "Library scan" : "Health check"} started` : "Job already running", { duration: 2000 });
+   245→        setTimeout(() => {
+   246→          void loadStatus();
+   247→          void loadFindings();
+   248→          void loadHistory();
+   249→        }, 1500);
+   250→      } else {
+   251→        toast.error(data.error ?? "Failed to start job");
+   252→      }
+   253→    } catch {
+   254→      toast.error("Agent unreachable");
+   255→    } finally {
+   256→      setBusy("");
+   257→    }
+   258→  };
+   259→
+   260→  const patchConfig = async (patch: Record<string, unknown>) => {
+   261→    try {
+   262→      const res = await fetch("/api/agent/config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+   263→      if (res.ok) {
+   264→        await loadStatus();
+   265→        toast("Agent settings saved", { duration: 1500 });
+   266→      } else {
+   267→        toast.error("Failed to save settings");
+   268→      }
+   269→    } catch {
+   270→      toast.error("Agent unreachable");
+   271→    }
+   272→  };
+   273→
+   274→  if (!status) {
+   275→    return (
+   276→      <div className="px-8 pb-24 pt-8" data-testid="agent-view-loading">
+   277→        <div className="mb-6 h-9 w-56 animate-pulse rounded bg-[var(--elevated)]" />
+   278→        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+   279→          {Array.from({ length: 4 }).map((_, i) => (
+   280→            <div key={i} className="h-24 animate-pulse rounded-[6px] bg-[var(--elevated)]" />
+   281→          ))}
+   282→        </div>
+   283→      </div>
+   284→    );
+   285→  }
+   286→
+   287→  const cfg = status.config;
+   288→  const health = status.latestHealth;
+   289→  const runningNow = status.running.health || status.running.scan;
+   290→  const foundArtwork = (status.findingCounts.artwork?.found ?? 0) + (status.findingCounts.artwork?.applied ?? 0);
+   291→  const foundBios = status.findingCounts.bio?.found ?? 0;
+   292→  const foundMeta = status.findingCounts.metadata?.found ?? 0;
+   293→
+   294→  return (
+   295→    <div className="px-8 pb-24 pt-8" data-testid="agent-view">
+   296→      {/* header */}
+   297→      <div className="mb-6 flex flex-wrap items-center gap-3">
+   298→        <div className="flex h-11 w-11 items-center justify-center rounded-[8px] bg-[var(--primary)]/15 text-[var(--primary)]">
+   299→          <Bot size={24} />
+   300→        </div>
+   301→        <div className="mr-auto">
+   302→          <h1 className="text-[26px] font-black leading-tight text-[var(--fg)]">Library Agent</h1>
+   303→          <div className="text-[12.5px] text-[var(--fg-dim)]">
+   304→            Autonomous manager — scrapes the internet for library metadata and monitors system health
+   305→          </div>
+   306→        </div>
+   307→        <Pill tone={cfg.enabled ? (runningNow ? "accent" : "good") : "neutral"}>
+   308→          {cfg.enabled ? (runningNow ? "Working…" : "Active") : "Paused"}
+   309→        </Pill>
+   310→        <button
+   311→          type="button"
+   312→          className="fs-pill"
+   313→          onClick={() => patchConfig({ enabled: !cfg.enabled })}
+   314→          title={cfg.enabled ? "Pause the agent" : "Resume the agent"}
+   315→        >
+   316→          {cfg.enabled ? <Pause size={14} /> : <Play size={14} className="fill-current" />}
+   317→          {cfg.enabled ? "Pause" : "Resume"}
+   318→        </button>
+   319→        <button type="button" className="fs-pill" onClick={() => void trigger("health")} disabled={busy !== "" || status.running.health}>
+   320→          <RefreshCw size={14} className={cn(status.running.health && "fs-spin")} />
+   321→          Health check
+   322→        </button>
+   323→        <button type="button" className="fs-pill" onClick={() => void trigger("scan")} disabled={busy !== "" || status.running.scan}>
+   324→          <RefreshCw size={14} className={cn(status.running.scan && "fs-spin")} />
+   325→          Scan library
+   326→        </button>
+   327→      </div>
+   328→
+   329→      {/* stat cards */}
+   330→      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+   331→        <StatCard
+   332→          label="System health"
+   333→          value={health ? health.overall.toUpperCase() : "UNKNOWN"}
+   334→          sub={health ? `${health.score}/100 · server ${health.serverLatency} ms · checked ${timeAgo(health.id)}` : "waiting for first check"}
+   335→          icon={<HeartPulse size={19} />}
+   336→        />
+   337→        <StatCard
+   338→          label="Internet sources"
+   339→          value={health ? (health.internetOk ? "Online" : "Offline") : "—"}
+   340→          sub={health ? `${Object.values(cfg.sources).filter(Boolean).length} sources enabled` : undefined}
+   341→          icon={<Globe size={19} />}
+   342→        />
+   343→        <StatCard
+   344→          label="Gaps pending"
+   345→          value={status.pendingCount.toLocaleString()}
+   346→          sub="items the app noticed missing — resolved by the next scan"
+   347→          icon={<AlertTriangle size={19} />}
+   348→        />
+   349→        <StatCard
+   350→          label="Enriched items"
+   351→          value={(foundArtwork + foundBios + foundMeta + (status.findingCounts.lyrics?.found ?? 0)).toLocaleString()}
+   352→          sub={`${foundArtwork} art · ${foundBios} bios · ${foundMeta} metadata`}
+   353→          icon={<Database size={19} />}
+   354→        />
+   355→      </div>
+   356→
+   357→      {/* tabs */}
+   358→      <div className="mb-4 flex items-center gap-5 border-b border-[var(--border)]">
+   359→        {(["health", "enrichments", "activity", "settings"] as const).map((t) => (
+   360→          <button
+   361→            key={t}
+   362→            type="button"
+   363→            onClick={() => setTab(t)}
+   364→            className={cn(
+   365→              "-mb-px border-b-2 pb-2.5 pt-1 text-[12px] font-bold uppercase tracking-[0.08em] transition-colors",
+   366→              tab === t ? "border-[var(--primary)] text-[var(--fg)]" : "border-transparent text-[var(--fg-dim)] hover:text-[var(--fg)]",
+   367→            )}
+   368→          >
+   369→            {t}
+   370→          </button>
+   371→        ))}
+   372→        <div className="ml-auto pb-2 text-[11.5px] text-[var(--fg-dim)]">
+   373→          last scan {timeAgo(status.lastScanRun?.startedAt)} · last check {timeAgo(status.lastHealthRun?.startedAt)}
+   374→        </div>
+   375→      </div>
+   376→
+   377→      {/* ------------------------------------------------ health tab */}
+   378→      {tab === "health" && (
+   379→        <div className="grid gap-4 lg:grid-cols-2" data-testid="agent-health-tab">
+   380→          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+   381→            <div className="mb-3 flex items-center justify-between">
+   382→              <h3 className="text-[14px] font-extrabold text-[var(--fg)]">Latest checks</h3>
+   383→              {status.running.health && <Pill tone="accent">running…</Pill>}
+   384→            </div>
+   385→            {!health && <p className="text-[13px] text-[var(--fg-dim)]">No health snapshot yet — the first check runs right after server boot.</p>}
+   386→            {health && (
+   387→              <div className="flex flex-col gap-2.5">
+   388→                <div className="mb-1 grid grid-cols-3 gap-2 text-[11.5px] text-[var(--fg-dim)]">
+   389→                  <span>
+   390→                    <b className="text-[var(--fg)]">{health.serverName || "server"}</b> v{health.serverVersion}
+   391→                  </span>
+   392→                  <span>
+   393→                    {health.albumCount.toLocaleString()} albums · {health.songCount.toLocaleString()} songs
+   394→                  </span>
+   395→                  <span>
+   396→                    {Math.round(health.mediaReadable * 100)}% media readable · {health.memoryMb} MB RSS
+   397→                  </span>
+   398→                </div>
+   399→                {health.checks.map((c) => (
+   400→                  <div key={c.name} className="flex items-start gap-2.5 rounded-[4px] bg-[var(--bg)] px-3 py-2.5">
+   401→                    <div className="pt-0.5">
+   402→                      <StatusIcon status={c.status} />
+   403→                    </div>
+   404→                    <div className="min-w-0 flex-1">
+   405→                      <div className="flex items-baseline gap-2">
+   406→                        <span className="text-[13px] font-bold text-[var(--fg)]">{c.name}</span>
+   407→                        {c.latencyMs > 0 && <span className="text-[11px] text-[var(--fg-dim)]">{c.latencyMs} ms</span>}
+   408→                      </div>
+   409→                      <div className="text-[12px] leading-snug text-[var(--fg-dim)]">{c.detail}</div>
+   410→                    </div>
+   411→                  </div>
+   412→                ))}
+   413→              </div>
+   414→            )}
+   415→          </div>
+   416→          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+   417→            <h3 className="mb-3 text-[14px] font-extrabold text-[var(--fg)]">Score history</h3>
+   418→            <ScoreSparkline history={history} />
+   419→            <div className="mt-3 text-[11.5px] text-[var(--fg-dim)]">
+   420→              Health score over the last {history.length || 0} checks (every {cfg.healthIntervalMin} min). Media readability below 100% usually means a
+   421→              media share is unmounted on the server.
+   422→            </div>
+   423→          </div>
+   424→        </div>
+   425→      )}
+   426→
+   427→      {/* ------------------------------------------------ enrichments tab */}
+   428→      {tab === "enrichments" && (
+   429→        <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4" data-testid="agent-enrichments-tab">
+   430→          <div className="mb-3 flex flex-wrap items-center gap-2">
+   431→            <h3 className="mr-auto text-[14px] font-extrabold text-[var(--fg)]">Scraped knowledge ({findingsTotal.toLocaleString()})</h3>
+   432→            <select
+   433→              value={kindFilter}
+   434→              onChange={(e) => setKindFilter(e.target.value)}
+   435→              className="fs-input h-8 w-40 py-0 text-[12.5px]"
+   436→              aria-label="Filter by kind"
+   437→            >
+   438→              <option value="">All kinds</option>
+   439→              {Object.entries(KIND_META).map(([k, m]) => (
+   440→                <option key={k} value={k}>
+   441→                  {m.label}
+   442→                </option>
+   443→              ))}
+   444→            </select>
+   445→            <button type="button" className="fs-pill !py-1.5" onClick={() => void loadFindings()}>
+   446→              <RefreshCw size={13} />
+   447→              Refresh
+   448→            </button>
+   449→          </div>
+   450→          {findings.length === 0 ? (
+   451→            <p className="py-8 text-center text-[13px] text-[var(--fg-dim)]">
+   452→              Nothing scraped yet. Trigger a library scan, or browse albums — the agent notices missing artwork as you browse and fills the gaps.
+   453→            </p>
+   454→          ) : (
+   455→            <div className="max-h-[520px] overflow-y-auto">
+   456→              <table className="w-full text-left text-[12.5px]">
+   457→                <thead className="sticky top-0 bg-[var(--elevated)] text-[11px] uppercase tracking-[0.06em] text-[var(--fg-dim)]">
+   458→                  <tr>
+   459→                    <th className="px-2 py-2">Item</th>
+   460→                    <th className="px-2 py-2">Kind</th>
+   461→                    <th className="px-2 py-2">Source</th>
+   462→                    <th className="px-2 py-2">Status</th>
+   463→                    <th className="px-2 py-2">Detail</th>
+   464→                    <th className="px-2 py-2">Updated</th>
+   465→                  </tr>
+   466→                </thead>
+   467→                <tbody>
+   468→                  {findings.map((f) => (
+   469→                    <tr key={f.id} className="border-t border-[var(--border)]">
+   470→                      <td className="max-w-[220px] px-2 py-2">
+   471→                        <div className="truncate font-semibold text-[var(--fg)]">{f.itemName || f.itemId}</div>
+   472→                        {f.itemSubtitle && <div className="truncate text-[11px] text-[var(--fg-dim)]">{f.itemSubtitle}</div>}
+   473→                      </td>
+   474→                      <td className="px-2 py-2">
+   475→                        <span className="flex items-center gap-1.5 text-[var(--fg-dim)]">
+   476→                          {KIND_META[f.kind]?.icon}
+   477→                          {KIND_META[f.kind]?.label ?? f.kind}
+   478→                        </span>
+   479→                      </td>
+   480→                      <td className="px-2 py-2 text-[var(--fg-dim)]">{SOURCE_LABELS[f.source] ?? f.source ?? "—"}</td>
+   481→                      <td className="px-2 py-2">
+   482→                        <Pill tone={f.status === "found" || f.status === "applied" ? "good" : f.status === "pending" ? "warn" : "neutral"}>{f.status}</Pill>
+   483→                      </td>
+   484→                      <td className="max-w-[280px] truncate px-2 py-2 text-[var(--fg-dim)]" title={f.summary}>
+   485→                        {f.summary || "—"}
+   486→                      </td>
+   487→                      <td className="whitespace-nowrap px-2 py-2 text-[11.5px] text-[var(--fg-dim)]">{timeAgo(f.updatedAt)}</td>
+   488→                    </tr>
+   489→                  ))}
+   490→                </tbody>
+   491→              </table>
+   492→            </div>
+   493→          )}
+   494→        </div>
+   495→      )}
+   496→
+   497→      {/* ------------------------------------------------ activity tab */}
+   498→      {tab === "activity" && (
+   499→        <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4" data-testid="agent-activity-tab">
+   500→          <div className="mb-3 flex items-center gap-2">
+   501→            <h3 className="mr-auto text-[14px] font-extrabold text-[var(--fg)]">Recent runs</h3>
+   502→            {status.running.scan && <Pill tone="accent">scan running…</Pill>}
+   503→            {status.running.health && <Pill tone="accent">health running…</Pill>}
+   504→          </div>
+   505→          <div className="flex flex-col gap-2.5">
+   506→            {[status.lastHealthRun, status.lastScanRun].filter(Boolean).map((run) => (
+   507→              <RunCard key={run!.id} run={run!} />
+   508→            ))}
+   509→            <p className="mt-2 text-[11.5px] text-[var(--fg-dim)]">
+   510→              Runs are scheduled automatically (health every {cfg.healthIntervalMin} min, scans every {cfg.scanIntervalMin} min) and can be triggered
+   511→              manually from the header.
+   512→            </p>
+   513→          </div>
+   514→        </div>
+   515→      )}
+   516→
+   517→      {/* ------------------------------------------------ settings tab */}
+   518→      {tab === "settings" && (
+   519→        <div className="grid max-w-3xl gap-4" data-testid="agent-settings-tab">
+   520→          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+   521→            <h3 className="mb-3 text-[14px] font-extrabold text-[var(--fg)]">Schedule</h3>
+   522→            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+   523→              <NumberField
+   524→                label="Health interval (min)"
+   525→                value={cfg.healthIntervalMin}
+   526→                min={1}
+   527→                max={1440}
+   528→                onCommit={(v) => void patchConfig({ healthIntervalMin: v })}
+   529→              />
+   530→              <NumberField label="Scan interval (min)" value={cfg.scanIntervalMin} min={1} max={1440} onCommit={(v) => void patchConfig({ scanIntervalMin: v })} />
+   531→              <NumberField label="Items per scan" value={cfg.batchSize} min={1} max={100} onCommit={(v) => void patchConfig({ batchSize: v })} />
+   532→            </div>
+   533→          </div>
+   534→          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+   535→            <h3 className="mb-1 text-[14px] font-extrabold text-[var(--fg)]">Internet sources</h3>
+   536→            <p className="mb-3 text-[12px] text-[var(--fg-dim)]">Free, key-less public APIs; requests are rate-limited and attributed to the agent.</p>
+   537→            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+   538→              {Object.entries(cfg.sources).map(([src, on]) => (
+   539→                <button
+   540→                  key={src}
+   541→                  type="button"
+   542→                  onClick={() => void patchConfig({ sources: { ...cfg.sources, [src]: !on } })}
+   543→                  className="flex items-center justify-between rounded-[4px] bg-[var(--bg)] px-3 py-2.5 text-left transition-colors hover:bg-[var(--hover)]"
+   544→                >
+   545→                  <span className="text-[13px] font-semibold text-[var(--fg)]">{SOURCE_LABELS[src] ?? src}</span>
+   546→                  <Pill tone={on ? "good" : "neutral"}>{on ? "enabled" : "off"}</Pill>
+   547→                </button>
+   548→              ))}
+   549→            </div>
+   550→          </div>
+   551→          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+   552→            <h3 className="mb-2 text-[14px] font-extrabold text-[var(--fg)]">What the agent does with it</h3>
+   553→            <ul className="list-inside list-disc space-y-1.5 text-[12.5px] leading-relaxed text-[var(--fg-dim)]">
+   554→              <li>Missing album &amp; artist artwork is served automatically by the image proxy (replaces initials tiles).</li>
+   555→              <li>Artist pages without a bio get a Wikipedia biography with attribution.</li>
+   556→              <li>Tracks without lyrics get synced/plain lyrics from LRCLIB on playback.</li>
+   557→              <li>Albums missing year/genre/track-count get metadata from Deezer/iTunes/MusicBrainz.</li>
+   558→            </ul>
+   559→          </div>
+   560→        </div>
+   561→      )}
+   562→    </div>
+   563→  );
+   564→}
+   565→
+   566→// ---------------------------------------------------------------- pieces
+   567→
+   568→function RunCard({ run }: { run: AgentRunRow }) {
+   569→  const [open, setOpen] = useState(false);
+   570→  const tone = run.status === "success" ? "good" : run.status === "running" ? "accent" : run.status === "partial" ? "warn" : run.status === "failed" ? "bad" : "neutral";
+   571→  return (
+   572→    <div className="rounded-[4px] bg-[var(--bg)] px-3 py-2.5">
+   573→      <button type="button" className="flex w-full items-center gap-2.5 text-left" onClick={() => setOpen((v) => !v)}>
+   574→        <StatusIcon status={run.status === "success" ? "ok" : run.status === "partial" ? "warn" : run.status === "running" ? "warn" : "fail"} />
+   575→        <span className="text-[13px] font-bold capitalize text-[var(--fg)]">{run.jobType}</span>
+   576→        <Pill tone={tone}>{run.status}</Pill>
+   577→        <span className="ml-auto flex items-center gap-3 text-[11.5px] text-[var(--fg-dim)]">
+   578→          <span className="flex items-center gap-1">
+   579→            <Clock size={11} />
+   580→            {timeAgo(run.startedAt)}
+   581→          </span>
+   582→          {run.durationMs != null && <span>{(run.durationMs / 1000).toFixed(1)}s</span>}
+   583→          <span>
+   584→            {run.processed} processed · {run.enriched} enriched
+   585→          </span>
+   586→        </span>
+   587→      </button>
+   588→      {run.error && <div className="mt-1.5 whitespace-pre-wrap rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-300">{run.error}</div>}
+   589→      {open && run.log && (
+   590→        <pre className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap rounded bg-[var(--elevated)] p-2 font-mono text-[11px] leading-snug text-[var(--fg-dim)]">
+   591→          {run.log}
+   592→        </pre>
+   593→      )}
+   594→      {open && !run.log && <p className="mt-2 text-[11.5px] text-[var(--fg-dim)]">No log captured for this run.</p>}
+   595→    </div>
+   596→  );
+   597→}
+   598→
+   599→function ScoreSparkline({ history }: { history: HistoryPoint[] }) {
+   600→  if (history.length === 0) return <p className="text-[13px] text-[var(--fg-dim)]">No history yet.</p>;
+   601→  const W = 100;
+   602→  const H = 32;
+   603→  const pts = history.map((h, i) => `${(i / Math.max(history.length - 1, 1)) * W},${H - (h.score / 100) * H}`).join(" ");
+   604→  const media = history.map((h, i) => `${(i / Math.max(history.length - 1, 1)) * W},${H - h.mediaReadable * H}`).join(" ");
+   605→  return (
+   606→    <div>
+   607→      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-24 w-full" aria-label="Health score history chart">
+   608→        <polyline points={media} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="0.8" vectorEffect="non-scaling-stroke" />
+   609→        <polyline points={pts} fill="none" stroke="var(--primary)" strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
+   610→      </svg>
+   611→      <div className="mt-1 flex gap-4 text-[11px] text-[var(--fg-dim)]">
+   612→        <span className="flex items-center gap-1.5">
+   613→          <span className="inline-block h-0.5 w-4" style={{ background: "var(--primary)" }} /> health score
+   614→        </span>
+   615→        <span className="flex items-center gap-1.5">
+   616→          <span className="inline-block h-0.5 w-4 bg-white/20" /> media readability
+   617→        </span>
+   618→      </div>
+   619→    </div>
+   620→  );
+   621→}
+   622→
+   623→function NumberField({ label, value, min, max, onCommit }: { label: string; value: number; min: number; max: number; onCommit: (v: number) => void }) {
+   624→  // draft state with adjust-during-render reset when the prop value changes
+   625→  const [state, setState] = useState({ lastProp: value, draft: String(value) });
+   626→  if (state.lastProp !== value) {
+   627→    setState({ lastProp: value, draft: String(value) });
+   628→  }
+   629→  return (
+   630→    <label className="flex flex-col gap-1.5">
+   631→      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fg-dim)]">{label}</span>
+   632→      <input
+   633→        type="number"
+   634→        min={min}
+   635→        max={max}
+   636→        value={state.draft}
+   637→        onChange={(e) => setState({ ...state, draft: e.target.value })}
+   638→        onBlur={() => {
+   639→          const n = Number(state.draft);
+   640→          if (!Number.isNaN(n) && n >= min && n <= max && n !== value) onCommit(n);
+   641→          setState({ lastProp: value, draft: String(value) });
+   642→        }}
+   643→        className="fs-input h-9"
+   644→      />
+   645→    </label>
+   646→  );
+   647→}
+   648→

@@ -26,23 +26,28 @@ model AgentRun {
 // One scraped datum about one library item, keyed by (itemId, kind).
 // kind: "artwork" | "bio" | "metadata" | "lyrics"
 // status: "pending" (gap noticed, not yet looked up) | "found" | "missing" | "applied" | "error"
+// serverStatus: write-back state towards Jellyfin — none | synced | failed
 model AgentFinding {
-  id           String   @id @default(cuid())
-  itemId       String
-  itemType     String // album | artist | song
-  itemName     String   @default("")
-  itemSubtitle String   @default("") // artist name (albums) / album name (songs)
-  kind         String
-  source       String   @default("") // deezer | itunes | coverart | musicbrainz | wikipedia | lrclib
-  status       String   @default("found")
-  payload      String   @default("{}") // JSON blob with the scraped data
-  summary      String   @default("") // human-readable one-liner for the dashboard
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String    @id @default(cuid())
+  itemId         String
+  itemType       String // album | artist | song
+  itemName       String    @default("")
+  itemSubtitle   String    @default("") // artist name (albums) / album name (songs)
+  kind           String
+  source         String    @default("") // deezer | itunes | coverart | musicbrainz | wikipedia | lrclib
+  status         String    @default("found")
+  payload        String    @default("{}") // JSON blob with the scraped data
+  summary        String    @default("") // human-readable one-liner for the dashboard
+  serverStatus   String    @default("none") // none | synced | failed (Jellyfin write-back)
+  serverError    String?
+  serverSyncedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([itemId, kind])
   @@index([kind, status])
   @@index([status])
+  @@index([serverStatus])
 }
 
 // Point-in-time system health report
@@ -69,6 +74,7 @@ model AgentConfig {
   scanIntervalMin   Int      @default(45)
   healthIntervalMin Int      @default(5)
   batchSize         Int      @default(16)
+  writeBack         String   @default("manual") // off | manual | auto — push scraped data into Jellyfin
   sources           String   @default("{}") // JSON {musicbrainz,deezer,itunes,coverart,wikipedia,lrclib}
   lastStage         String   @default("albums") // albums | artists — alternates between runs
   updatedAt         DateTime @updatedAt

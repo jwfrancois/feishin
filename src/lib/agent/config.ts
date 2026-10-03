@@ -24,6 +24,7 @@ export interface AgentConfigData {
   scanIntervalMin: number;
   healthIntervalMin: number;
   batchSize: number;
+  writeBack: "off" | "manual" | "auto";
   sources: AgentSources;
   lastStage: "albums" | "artists";
 }
@@ -51,6 +52,7 @@ export async function ensureConfig(): Promise<AgentConfigData> {
     scanIntervalMin: row.scanIntervalMin,
     healthIntervalMin: row.healthIntervalMin,
     batchSize: row.batchSize,
+    writeBack: row.writeBack === "auto" ? "auto" : row.writeBack === "off" ? "off" : "manual",
     sources,
     lastStage: row.lastStage === "artists" ? "artists" : "albums",
   };
@@ -67,6 +69,7 @@ export async function updateConfig(patch: Partial<AgentConfigData>): Promise<Age
       ...(patch.scanIntervalMin !== undefined ? { scanIntervalMin: Math.max(1, Math.min(1440, Math.round(patch.scanIntervalMin))) } : {}),
       ...(patch.healthIntervalMin !== undefined ? { healthIntervalMin: Math.max(1, Math.min(1440, Math.round(patch.healthIntervalMin))) } : {}),
       ...(patch.batchSize !== undefined ? { batchSize: Math.max(1, Math.min(100, Math.round(patch.batchSize))) } : {}),
+      ...(patch.writeBack !== undefined ? { writeBack: patch.writeBack === "auto" ? "auto" : patch.writeBack === "off" ? "off" : "manual" } : {}),
       ...(patch.lastStage !== undefined ? { lastStage: patch.lastStage } : {}),
       ...(patch.sources !== undefined ? { sources: JSON.stringify({ ...DEFAULT_SOURCES, ...patch.sources }) } : {}),
     },
@@ -83,6 +86,7 @@ export async function updateConfig(patch: Partial<AgentConfigData>): Promise<Age
     scanIntervalMin: row.scanIntervalMin,
     healthIntervalMin: row.healthIntervalMin,
     batchSize: row.batchSize,
+    writeBack: row.writeBack === "auto" ? "auto" : row.writeBack === "off" ? "off" : "manual",
     sources,
     lastStage: row.lastStage === "artists" ? "artists" : "albums",
   };
