@@ -75,7 +75,8 @@ model AgentConfig {
   healthIntervalMin Int      @default(5)
   batchSize         Int      @default(16)
   writeBack         String   @default("manual") // off | manual | auto — push scraped data into Jellyfin
-  sources           String   @default("{}") // JSON {musicbrainz,deezer,itunes,coverart,wikipedia,lrclib}
+  sources           String   @default("{}") // JSON {musicbrainz,deezer,itunes,coverart,wikipedia,lrclib,fanart}
+  fanartApiKey      String? // Fanart.tv personal API key (artist photos) — or FANARTTV_API_KEY env
   lastStage         String   @default("albums") // albums | artists — alternates between runs
   updatedAt         DateTime @updatedAt
 }

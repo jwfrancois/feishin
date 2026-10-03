@@ -258,6 +258,26 @@ interface CacheEntry {
 
 const cache: Map<string, CacheEntry> = (g.__feishinJfCache ??= new Map());
 
+// Bound the cache: entries older than their TTL are dead weight (never served),
+// and an unbounded map on a 7k-album library slowly eats RSS (health check was
+// warning at 1.2 GB). Evict expired entries whenever the map grows; hard-cap
+// the live-entry count by dropping the oldest.
+const CACHE_MAX_ENTRIES = 400;
+
+function trimCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.promise === undefined && entry.data !== undefined && now - entry.ts > entry.ttl) {
+      cache.delete(key);
+    }
+  }
+  while (cache.size > CACHE_MAX_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 export function invalidateJfCache(prefix?: string): void {
   if (!prefix) {
     cache.clear();
@@ -282,6 +302,7 @@ export async function jfGetCached(path: string, params: URLSearchParams, ttlMs =
   const promise = (async () => {
     const data = await jfJson(path, { params });
     cache.set(key, { ts: Date.now(), ttl: ttlMs, data });
+    trimCache();
     return data;
   })();
 

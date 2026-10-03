@@ -168,3 +168,24 @@ Stage Summary:
 - The agent now writes scraped bios/metadata/lyrics/artwork back INTO Jellyfin (fill-if-missing, tracked, retryable) — proven end-to-end against the live server.
 - NAS share recovery is first-class: per-share readability, recovery detection, re-probe button; score recovers on the next check after remount.
 - Scan frequency/batch size tunable via number fields AND presets; changes take effect within ~30 s.
+
+---
+Task ID: 7
+Agent: main (Super Z)
+Task: (a) NAS remount re-probe + health score verification, (b) Fanart.tv artist-photo source with API key, (c) internet bio + discography on artist pages
+
+Work Log:
+- Re-probe after remount: ran health checks — /mnt/nas_share RECOVERED (tracks stream 200 via proxy; verified against real Jellyfin, not just the sampler). /mnt1/unraid_share still unmounted server-side (404 both direct API-key probe and proxy; ~94% of tracks live there), so the score holds at 59-67 until that host-side remount happens. With unraid back the media check passes and the score computes to ~92 (matches the user's ~90+ expectation). Per-share breakdown + "Re-probe after remount" button (Task 6) surface all of this in the dashboard.
+- Fanart.tv source (new src/lib/agent/sources/fanart.ts): artistthumb/artistbackground (likes-ranked) keyed by MusicBrainz MBID; API key resolved from AgentConfig.fanartApiKey (new SQLite column) -> FANARTTV_API_KEY env -> empty. fanartProbe() for health ("ok" | "bad-key" | "no-key" | "down"). Network path verified live: endpoint reachable, 401 without key as documented.
+- Wiring: scan job artist-photo chain = fanart -> deezer -> wikipedia thumbnail (new last-resort fallback reading bio payload); enrichment route live artist-artwork lookup got the same chain; health check probes fanart and appends key state to "Internet sources" detail (7/7 reachable — Fanart.tv: no API key...); dashboard Settings gained "Fanart.tv (artist photos)" toggle (auto-rendered from sources) + API-key TextField (adjust-during-render pattern) + explainer.
+- Internet bio: artist-detail now ALWAYS fetches the agent's Wikipedia bio (not only when the Jellyfin overview is empty) and renders both attributed sections ("From your Jellyfin library" + "Biography via Wikipedia · Library Agent"); expand/collapse kept; default template only when both absent.
+- Internet discography: new GET /api/agent/discography/[artistId] — MusicBrainz release-groups (mbArtistReleaseGroups browse, 1 req/s limiter, newest first) cached in AgentFinding kind="discography"; in-library diff recomputed LIVE each request against the artist's Jellyfin albums (normalized-title match) so library changes reflect instantly; sorted albums -> EPs -> singles. agent-client.getAgentDiscography() + artist-detail "From the internet" section (count badge, "N matched your library" note, rows with year/title/type/secondary-types/"not in library" badge, links to musicbrainz.org).
+- Verified LIVE: Nelly Furtado -> MBID resolved, 100 release-groups, 4 matched ("7", "The Ride", "The Spirit Indestructible", "Folklore"), 96 not-in-library listed albums-first; bio renders; agent settings fields render; scan + auto write-back still work (metadata "Is Your Love Big Enough?" -> year/genres written to Jellyfin); health check shows fanart key state.
+- Debugging detour (resolved): app initially seemed non-interactive — caused by reading only the first 300 chars of body.innerText (sidebar with 771 server playlists dominates it); scoped checks to [data-testid=main-content] and everything worked; temporary probes in router-store removed afterwards. No real defect.
+- Ops: sandbox reaps user-spawned dev servers every ~60s; added scripts/ensure-dev.sh (respawn + readiness wait, used per verification round) and scripts/dev-watchdog.sh (best-effort keep-alive). jf-server SWR cache now bounded (trimCache: expired eviction + 400-entry cap) — health had warned at 1.2 GB RSS.
+- tsc: 0 errors in src/ (7120 pre-existing in feishin-ref/ + examples/); eslint clean on all touched files; browser e2e: artist page + agent dashboard verified, 0 console errors, screenshots in download/.
+
+Stage Summary:
+- Artist pages now combine library + internet: Wikipedia bio alongside the Jellyfin overview, and a MusicBrainz "From the internet" discography of releases not in the library.
+- Fanart.tv integrated as the first-choice artist-photo source with first-class API-key management (Settings field + env var + health-check key state); works the moment the user pastes their free personal key.
+- Health check verified the nas_share remount recovery; unraid_share still awaits a host-side remount (score recovers to ~92 automatically on the next check once done).

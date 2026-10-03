@@ -1,11 +1,11 @@
 "use client";
 // Feishin rebuild — album artist detail route (hero with blurred bg, about, discography — faithful)
-import { useEffect, useMemo, useState } from "react";
-import { Play, ChevronDown, Radio } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Play, ChevronDown, Radio, ExternalLink, Globe } from "lucide-react";
 import { setLike, fetchArtist, fetchArtistAlbums, fetchArtistTopSongs } from "@/lib/jellyfin";
 import type { Artist, Album, Song } from "@/lib/types";
 import { useJfQuery } from "@/hooks/use-jf";
-import { getAgentFinding } from "@/lib/agent-client";
+import { getAgentFinding, getAgentDiscography, type DiscogRelease } from "@/lib/agent-client";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
 import { ItemImage, LikeButton, FavoriteHeart, Kebab } from "../shared";
@@ -35,18 +35,34 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
   const [likeOverride, setLikeOverride] = useState<boolean | null>(null);
   const liked = likeOverride ?? !!artist?.likes;
 
-  // Library Agent: when Jellyfin has no bio, the agent supplies one from Wikipedia
-  // (first visit triggers the live lookup; afterwards it is served from the agent DB).
-  // NOTE: hook must run unconditionally — null key when not needed.
-  const needsAgentBio = !!artist && !artist.overview?.trim();
+  // Library Agent: the internet info is shown ALONGSIDE the library data, not
+  // only as a fallback — the Wikipedia biography (first visit triggers the live
+  // lookup; afterwards it is served from the agent DB) and the MusicBrainz
+  // discography for releases that are not in the Jellyfin library.
+  // NOTE: hooks must run unconditionally — null key when not ready.
   const agentBioQ = useJfQuery(
-    needsAgentBio && artist ? `agent:bio:${artist.id}` : null,
+    artist ? `agent:bio:${artist.id}` : null,
     async () => {
       const a = artist!;
       const { finding } = await getAgentFinding(a.id, "bio", { name: a.name, fetch: true });
       return finding && finding.status === "found" && typeof finding.payload.text === "string" ? finding : null;
     },
     30 * 60_000,
+  );
+
+  const discogQ = useJfQuery(
+    artist ? `agent:discog:${artist.id}` : null,
+    async () => {
+      const a = artist!;
+      return getAgentDiscography(a.id, a.name, true);
+    },
+    30 * 60_000,
+  );
+
+  // hooks above the early returns — internet releases filtered once per data change
+  const internetReleases: DiscogRelease[] = useMemo(
+    () => (discogQ.data?.releases ?? []).filter((r) => !r.inLibrary),
+    [discogQ.data],
   );
 
   const toggleArtistLike = () => {
@@ -78,9 +94,10 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
   }
 
   const trackCount = albums.reduce((n, a) => n + (a.trackCount || 0), 0);
-  const agentBio = needsAgentBio ? agentBioQ.data ?? null : null;
+  const agentBio = agentBioQ.data ?? null;
   const agentBioText = typeof agentBio?.payload.text === "string" ? agentBio.payload.text : "";
-  const bio = artist.overview?.trim() || agentBioText || DEFAULT_BIO_TEMPLATE(artist.name);
+  const libOverview = artist.overview?.trim() ?? "";
+  const matchedInLibrary = (discogQ.data?.releases.length ?? 0) - internetReleases.length;
 
   return (
     <div className="pb-24" data-testid="artist-detail">
@@ -189,27 +206,38 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
         </button>
       </div>
 
-      {/* about */}
+      {/* about — library overview AND the agent's internet biography, each attributed */}
       <div className="px-8 pb-6">
         <h3 className="mb-2 text-xl font-extrabold text-[var(--fg)]">About {artist.name}</h3>
-        {agentBio && (
-          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-dim)]">
-            Biography via {agentBio.source === "wikipedia" ? "Wikipedia" : agentBio.source} · Library Agent
-          </div>
+        <div className={aboutExpanded ? "" : "line-clamp-3"}>
+          {libOverview && (
+            <>
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-dim)]">From your Jellyfin library</div>
+              <p className="mb-4 max-w-4xl whitespace-pre-line text-[13.5px] leading-relaxed text-[var(--fg-dim)]">{libOverview}</p>
+            </>
+          )}
+          {agentBioText && (
+            <>
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-dim)]">
+                Biography via {agentBio?.source === "wikipedia" ? "Wikipedia" : agentBio?.source} · Library Agent
+              </div>
+              <p className="max-w-4xl whitespace-pre-line text-[13.5px] leading-relaxed text-[var(--fg-dim)]">{agentBioText}</p>
+            </>
+          )}
+          {!libOverview && !agentBioText && (
+            <p className="max-w-4xl whitespace-pre-line text-[13.5px] leading-relaxed text-[var(--fg-dim)]">{DEFAULT_BIO_TEMPLATE(artist.name)}</p>
+          )}
+        </div>
+        {(libOverview || agentBioText) && (
+          <button
+            type="button"
+            onClick={() => setAboutExpanded((v) => !v)}
+            className="mx-auto mt-2 flex items-center justify-center text-[var(--fg-dim)] hover:text-[var(--fg)]"
+            aria-label={aboutExpanded ? "Collapse" : "Expand"}
+          >
+            <ChevronDown size={18} className={aboutExpanded ? "rotate-180 transition-transform" : "transition-transform"} />
+          </button>
         )}
-        <p
-          className={`max-w-4xl whitespace-pre-line text-[13.5px] leading-relaxed text-[var(--fg-dim)] ${aboutExpanded ? "" : "line-clamp-3"}`}
-        >
-          {bio}
-        </p>
-        <button
-          type="button"
-          onClick={() => setAboutExpanded((v) => !v)}
-          className="mx-auto mt-2 flex items-center justify-center text-[var(--fg-dim)] hover:text-[var(--fg)]"
-          aria-label={aboutExpanded ? "Collapse" : "Expand"}
-        >
-          <ChevronDown size={18} className={aboutExpanded ? "rotate-180 transition-transform" : "transition-transform"} />
-        </button>
       </div>
 
       {tab === "discography" ? (
@@ -243,6 +271,60 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
               ))}
             </div>
           )}
+
+          {/* internet discography — releases NOT in the library, scraped by the agent from MusicBrainz */}
+          <div className="mt-10" data-testid="internet-discography">
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <h2 className="flex items-center gap-2 text-xl font-extrabold text-[var(--fg)]">
+                <Globe size={17} className="text-[var(--primary)]" />
+                From the internet
+              </h2>
+              <span className="rounded-[4px] bg-[var(--elevated)] px-2 py-0.5 text-[11px] font-bold text-[var(--fg-dim)]">{internetReleases.length}</span>
+              {discogQ.data && (
+                <span className="text-[11px] text-[var(--fg-dim)]">
+                  MusicBrainz{matchedInLibrary > 0 ? ` · ${matchedInLibrary} release${matchedInLibrary === 1 ? "" : "s"} matched your library` : ""}
+                </span>
+              )}
+              <div className="h-px flex-1 bg-[var(--border)]" />
+            </div>
+            {discogQ.loading ? (
+              <div className="max-w-3xl flex flex-col gap-2">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="h-10 animate-pulse rounded-[4px] bg-[var(--elevated)]" />
+                ))}
+              </div>
+            ) : internetReleases.length === 0 ? (
+              <p className="text-[13px] text-[var(--fg-dim)]">
+                {discogQ.data ? "Every MusicBrainz release for this artist is already in your library." : "No internet discography found for this artist."}
+              </p>
+            ) : (
+              <div className="max-w-3xl flex flex-col">
+                {internetReleases.map((r) => (
+                  <a
+                    key={r.mbid}
+                    href={`https://musicbrainz.org/release-group/${r.mbid}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex items-center gap-3 border-b border-[var(--border)] px-2 py-2.5 transition-colors hover:bg-[var(--hover)]"
+                  >
+                    <span className="w-11 shrink-0 text-[12px] tabular-nums text-[var(--fg-dim)]">{r.year ?? "—"}</span>
+                    <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold text-[var(--fg)]">{r.title}</span>
+                    <span className="shrink-0 rounded-[4px] bg-[var(--elevated)] px-2 py-0.5 text-[11px] font-bold text-[var(--fg-dim)]">
+                      {r.primaryType ?? "Release"}
+                      {r.secondaryTypes && r.secondaryTypes.length > 0 ? ` · ${r.secondaryTypes.join(" / ")}` : ""}
+                    </span>
+                    <span className="hidden shrink-0 rounded-[4px] bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-400 sm:inline">not in library</span>
+                    <ExternalLink size={12} className="shrink-0 text-[var(--fg-dim)] opacity-0 transition-opacity group-hover:opacity-100" />
+                  </a>
+                ))}
+              </div>
+            )}
+            {discogQ.data && (
+              <p className="mt-2 text-[11px] text-[var(--fg-dim)]">
+                Internet releases scraped by the Library Agent from MusicBrainz — they are not part of your Jellyfin library. {matchedInLibrary > 0 ? "Releases that matched your library are not listed." : ""}
+              </p>
+            )}
+          </div>
         </div>
       ) : (
         <div className="px-8">

@@ -12,6 +12,7 @@ import { applyFindingToJellyfin } from "../writeback";
 import { dzSearchAlbum, dzArtistPicture, bestDzCover, type DeezerAlbum } from "../sources/deezer";
 import { itunesSearchAlbum, bestItunesArtwork, type ItunesAlbum } from "../sources/itunes";
 import { mbSearchReleaseGroup, mbSearchArtist, caaFrontUrl } from "../sources/musicbrainz";
+import { fanartArtistPhoto } from "../sources/fanart";
 import { wikiArtistBio } from "../sources/wikipedia";
 
 interface JfRawItem {
@@ -163,7 +164,7 @@ async function enrichAlbum(item: JfRawItem, log: RunLog, cfgSources: { deezer: b
 
 // ---------------------------------------------------------------- artist enrichment
 
-async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedia: boolean; deezer: boolean; itunes: boolean }, autoApply = false): Promise<{ enriched: number; missing: number }> {
+async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedia: boolean; deezer: boolean; itunes: boolean; fanart: boolean }, autoApply = false): Promise<{ enriched: number; missing: number }> {
   const name = item.Name ?? "";
   let enriched = 0;
   let missing = 0;
@@ -194,9 +195,25 @@ async function enrichArtist(item: JfRawItem, log: RunLog, cfgSources: { wikipedi
 
   if (needsPhoto) {
     let hit: ArtworkHit | null = null;
-    if (cfgSources.deezer) {
+    if (cfgSources.fanart) {
+      const fa = await fanartArtistPhoto(name).catch(() => null);
+      if (fa?.url) hit = { url: fa.url, source: "fanart", width: 1000, height: 1000 };
+    }
+    if (!hit && cfgSources.deezer) {
       const pic = await dzArtistPicture(name).catch(() => null);
       if (pic?.url) hit = { url: pic.url, source: "deezer", width: 1000, height: 1000 };
+    }
+    if (!hit) {
+      // last resort: the Wikipedia bio thumbnail (bio findings store it in the payload)
+      const bioFinding = await db.agentFinding.findUnique({ where: { itemId_kind: { itemId: item.Id, kind: "bio" } } }).catch(() => null);
+      if (bioFinding) {
+        try {
+          const p = JSON.parse(bioFinding.payload) as { thumbnailUrl?: string };
+          if (p.thumbnailUrl) hit = { url: p.thumbnailUrl, source: "wikipedia", width: 320, height: 320 };
+        } catch {
+          /* malformed payload — ignore */
+        }
+      }
     }
     if (hit) {
       const finding = await db.agentFinding.upsert({
@@ -239,7 +256,7 @@ export async function runScanJob(): Promise<ScanResult> {
       if (!item?.Id) throw new Error("item not found");
       processed++;
       if (item.Type === "MusicArtist") {
-        const r = await enrichArtist({ ...item, Name: item.Name ?? p.itemName }, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer, itunes: cfg.sources.itunes }, cfg.writeBack === "auto");
+        const r = await enrichArtist({ ...item, Name: item.Name ?? p.itemName }, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer, itunes: cfg.sources.itunes, fanart: cfg.sources.fanart }, cfg.writeBack === "auto");
         enriched += r.enriched;
         missing += r.missing;
       } else {
@@ -292,7 +309,7 @@ export async function runScanJob(): Promise<ScanResult> {
     log.add(`artist batch: ${artists.length} random artists`);
     for (const artist of artists) {
       try {
-        const r = await enrichArtist(artist, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer, itunes: cfg.sources.itunes }, cfg.writeBack === "auto");
+        const r = await enrichArtist(artist, log, { wikipedia: cfg.sources.wikipedia, deezer: cfg.sources.deezer, itunes: cfg.sources.itunes, fanart: cfg.sources.fanart }, cfg.writeBack === "auto");
         enriched += r.enriched;
         missing += r.missing;
         processed++;

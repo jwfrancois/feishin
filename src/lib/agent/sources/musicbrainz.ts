@@ -13,6 +13,14 @@ export interface MbReleaseGroup {
   score?: number;
 }
 
+export interface MbDiscogRelease {
+  mbid: string;
+  title: string;
+  year?: string;
+  primaryType?: string;
+  secondaryTypes?: string[];
+}
+
 interface MbSearchResponse {
   "release-groups"?: {
     id: string;
@@ -22,6 +30,17 @@ interface MbSearchResponse {
     score?: number;
   }[];
   artists?: { id: string; name: string; score?: number; disambiguation?: string }[];
+}
+
+interface MbBrowseResponse {
+  "release-groups"?: {
+    id: string;
+    title: string;
+    "first-release-date"?: string;
+    "primary-type"?: string;
+    "secondary-types"?: string[];
+  }[];
+  "release-group-count"?: number;
 }
 
 interface MbArtistLookup {
@@ -66,6 +85,23 @@ export async function mbSearchArtist(name: string): Promise<{ mbid: string; type
       .map((t) => t.name)
       .filter((g) => g.length < 30),
   };
+}
+
+/** Browse ALL release-groups of an artist (MBID), newest first — the internet discography. */
+export async function mbArtistReleaseGroups(mbid: string, limit = 100): Promise<MbDiscogRelease[]> {
+  if (!/^[0-9a-f-]{36}$/i.test(mbid)) return [];
+  const url = `${MB_BASE}/release-group?artist=${mbid}&limit=${Math.min(Math.max(limit, 1), 100)}&fmt=json`;
+  const data = await limiter.run(() => agentFetchJson<MbBrowseResponse>(url, { timeoutMs: 15_000 }));
+  const groups = data?.["release-groups"] ?? [];
+  return groups
+    .map((g) => ({
+      mbid: g.id,
+      title: g.title,
+      year: g["first-release-date"]?.slice(0, 4),
+      primaryType: g["primary-type"],
+      secondaryTypes: g["secondary-types"] ?? [],
+    }))
+    .sort((a, b) => (b.year ?? "").localeCompare(a.year ?? ""));
 }
 
 // ---------------------------------------------------------------- Cover Art Archive

@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { jfFetch, jfJson, getConnectionState, getConnectionRaw } from "@/lib/jf-server";
 import { ensureConfig, DEFAULT_SOURCES } from "../config";
 import { agentFetch } from "../http";
+import { fanartProbe } from "../sources/fanart";
 
 export type CheckStatus = "ok" | "warn" | "fail";
 
@@ -242,24 +243,39 @@ async function checkInternet(): Promise<HealthCheck & { ok: boolean }> {
     { name: "Cover Art Archive", url: "https://coverartarchive.org", enabled: cfg.sources.coverart },
     { name: "Wikipedia", url: "https://en.wikipedia.org", enabled: cfg.sources.wikipedia },
     { name: "LRCLIB", url: "https://lrclib.net", enabled: cfg.sources.lrclib },
+    { name: "Fanart.tv", url: "https://webservice.fanart.tv", enabled: cfg.sources.fanart },
   ];
   const results = await Promise.all(
     probes.map(async (p) => {
-      if (!p.enabled) return { name: p.name, up: true, skipped: true };
+      if (!p.enabled) return { name: p.name, up: true, skipped: true, note: "" };
       // GET (not HEAD — some hosts reject HEAD); ANY response proves reachability
       const res = await agentFetch(p.url, { method: "GET", timeoutMs: 8_000 });
       void res?.body?.cancel();
-      return { name: p.name, up: !!res, skipped: false };
+      return { name: p.name, up: !!res, skipped: false, note: "" };
     }),
   );
+  // Fanart.tv needs an API key — verify it and surface the key state explicitly
+  const fa = results.find((r) => r.name === "Fanart.tv");
+  if (fa && fa.up && !fa.skipped) {
+    const state = await fanartProbe();
+    if (state === "ok") fa.note = "API key working";
+    else if (state === "bad-key") {
+      fa.up = false;
+      fa.note = "API key rejected (401) — check it in Agent → Settings";
+    } else if (state === "no-key") fa.note = "no API key — artist photos off (get a free key at fanart.tv, paste it in Agent → Settings)";
+    else fa.note = "API error";
+  }
   const checked = results.filter((r) => !r.skipped);
   const up = checked.filter((r) => r.up).length;
   const downNames = checked.filter((r) => !r.up).map((r) => r.name);
+  const notes = checked.filter((r) => r.note).map((r) => `${r.name}: ${r.note}`);
   return {
     name: "Internet sources",
     status: checked.length === 0 ? "ok" : up === 0 ? "fail" : up < checked.length ? "warn" : "ok",
     latencyMs: 0,
-    detail: checked.length === 0 ? "All sources disabled in settings" : `${up}/${checked.length} reachable${downNames.length ? ` (down: ${downNames.join(", ")})` : ""}`,
+    detail:
+      (checked.length === 0 ? "All sources disabled in settings" : `${up}/${checked.length} reachable${downNames.length ? ` (down: ${downNames.join(", ")})` : ""}`) +
+      (notes.length ? ` — ${notes.join(" · ")}` : ""),
     ok: up > 0 || checked.length === 0,
   } as HealthCheck & { ok: boolean };
 }

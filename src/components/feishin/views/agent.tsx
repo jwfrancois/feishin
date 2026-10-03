@@ -57,6 +57,7 @@ interface AgentStatus {
     batchSize: number;
     writeBack: string;
     sources: Record<string, boolean>;
+    fanartApiKey: string;
     lastStage: string;
   };
   runtime: { startedAt: number; booted: boolean; running: string[]; lastTick: number; timerAlive: boolean };
@@ -120,6 +121,7 @@ const SOURCE_LABELS: Record<string, string> = {
   musicbrainz: "MusicBrainz",
   wikipedia: "Wikipedia",
   lrclib: "LRCLIB",
+  fanart: "Fanart.tv (artist photos)",
 };
 
 // ---------------------------------------------------------------- small pieces
@@ -737,7 +739,10 @@ export function AgentView() {
           </div>
           <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
             <h3 className="mb-1 text-[14px] font-extrabold text-[var(--fg)]">Internet sources</h3>
-            <p className="mb-3 text-[12px] text-[var(--fg-dim)]">Free, key-less public APIs; requests are rate-limited and attributed to the agent.</p>
+            <p className="mb-3 text-[12px] text-[var(--fg-dim)]">
+              Free public APIs; requests are rate-limited and attributed to the agent. Fanart.tv additionally needs a free personal API key (get one at
+              fanart.tv → get-an-api-key) — it is the reliable artist-photo source when Deezer's CDN blocks this network.
+            </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {Object.entries(cfg.sources).map(([src, on]) => (
                 <button
@@ -751,12 +756,24 @@ export function AgentView() {
                 </button>
               ))}
             </div>
+            <div className="mt-3">
+              <TextField
+                label="Fanart.tv API key"
+                value={cfg.fanartApiKey}
+                placeholder="paste your personal key — or set the FANARTTV_API_KEY env var"
+                onCommit={(v) => void patchConfig({ fanartApiKey: v })}
+              />
+              <p className="mt-1.5 text-[11px] text-[var(--fg-dim)]">
+                Without a key, artist photos fall back to Deezer (blocked on some networks) and Wikipedia thumbnails. The health check reports whether the
+                key works.
+              </p>
+            </div>
           </div>
           <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
             <h3 className="mb-2 text-[14px] font-extrabold text-[var(--fg)]">What the agent does with it</h3>
             <ul className="list-inside list-disc space-y-1.5 text-[12.5px] leading-relaxed text-[var(--fg-dim)]">
-              <li>Missing album &amp; artist artwork is served automatically by the image proxy (replaces initials tiles).</li>
-              <li>Artist pages without a bio get a Wikipedia biography with attribution.</li>
+              <li>Missing album &amp; artist artwork is served automatically by the image proxy (replaces initials tiles) — artist photos come from Fanart.tv (with API key), Deezer or Wikipedia.</li>
+              <li>Artist pages show the internet, not just your library: a Wikipedia biography next to the Jellyfin overview, plus a MusicBrainz discography section listing releases that are not in your library.</li>
               <li>Tracks without lyrics get synced/plain lyrics from LRCLIB on playback.</li>
               <li>Albums missing year/genre/track-count get metadata from Deezer/iTunes/MusicBrainz.</li>
               <li>
@@ -849,6 +866,33 @@ function NumberField({ label, value, min, max, onCommit }: { label: string; valu
           setState({ lastProp: value, draft: String(value) });
         }}
         className="fs-input h-9"
+      />
+    </label>
+  );
+}
+
+function TextField({ label, value, placeholder, onCommit }: { label: string; value: string; placeholder?: string; onCommit: (v: string) => void }) {
+  // draft state with adjust-during-render reset when the prop value changes
+  const [state, setState] = useState({ lastProp: value, draft: value });
+  if (state.lastProp !== value) {
+    setState({ lastProp: value, draft: value });
+  }
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--fg-dim)]">{label}</span>
+      <input
+        type="text"
+        value={state.draft}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => setState({ ...state, draft: e.target.value })}
+        onBlur={() => {
+          const v = state.draft.trim();
+          if (v !== value) onCommit(v);
+          else setState({ lastProp: value, draft: value });
+        }}
+        className="fs-input h-9 font-mono text-[12.5px]"
       />
     </label>
   );

@@ -26,3 +26,23 @@ export async function getAgentFinding(
   const data = (await res.json()) as { finding?: AgentFindingShape | null; lines?: { time: number; text: string }[] | null };
   return { finding: data.finding ?? null, lines: data.lines ?? null };
 }
+
+export interface DiscogRelease {
+  mbid: string;
+  title: string;
+  year?: string;
+  primaryType?: string;
+  secondaryTypes?: string[];
+  inLibrary: boolean;
+}
+
+/** Internet discography (MusicBrainz) diffed against the artist's library albums. */
+export async function getAgentDiscography(artistId: string, name: string, fetchNow = true): Promise<{ mbid: string; releases: DiscogRelease[] } | null> {
+  const sp = new URLSearchParams({ name });
+  if (fetchNow) sp.set("fetch", "1");
+  const res = await fetch(`/api/agent/discography/${artistId}?${sp.toString()}`, { cache: "no-store" });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { ok: boolean; releases?: DiscogRelease[] | null; mbid?: string };
+  if (!data.ok || !data.releases) return null;
+  return { mbid: data.mbid ?? "", releases: data.releases };
+}

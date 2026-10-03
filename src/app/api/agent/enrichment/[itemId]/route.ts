@@ -14,6 +14,7 @@ import { wikiArtistBio } from "@/lib/agent/sources/wikipedia";
 import { dzSearchAlbum, dzArtistPicture, bestDzCover } from "@/lib/agent/sources/deezer";
 import { itunesSearchAlbum, bestItunesArtwork } from "@/lib/agent/sources/itunes";
 import { mbSearchReleaseGroup, caaFrontUrl } from "@/lib/agent/sources/musicbrainz";
+import { fanartArtistPhoto } from "@/lib/agent/sources/fanart";
 import { lrclibGetLyrics } from "@/lib/agent/sources/lrclib";
 import { cleanQueryPart } from "@/lib/agent/http";
 
@@ -91,9 +92,25 @@ export async function GET(req: NextRequest, ctx: Ctx) {
         let hit: { url: string; source: string; width: number; height: number } | null = null;
         const itemType = sp.get("itemType") === "artist" ? "artist" : "album";
         if (itemType === "artist") {
-          if (cfg.sources.deezer) {
+          if (cfg.sources.fanart) {
+            const fa = await fanartArtistPhoto(name).catch(() => null);
+            if (fa?.url) hit = { url: fa.url, source: "fanart", width: 1000, height: 1000 };
+          }
+          if (!hit && cfg.sources.deezer) {
             const pic = await dzArtistPicture(name).catch(() => null);
             if (pic?.url) hit = { url: pic.url, source: "deezer", width: 1000, height: 1000 };
+          }
+          if (!hit) {
+            // last resort: the Wikipedia bio thumbnail (bio findings store it in the payload)
+            const bioFinding = await db.agentFinding.findUnique({ where: { itemId_kind: { itemId, kind: "bio" } } }).catch(() => null);
+            if (bioFinding) {
+              try {
+                const p = JSON.parse(bioFinding.payload) as { thumbnailUrl?: string };
+                if (p.thumbnailUrl) hit = { url: p.thumbnailUrl, source: "wikipedia", width: 320, height: 320 };
+              } catch {
+                /* malformed payload — ignore */
+              }
+            }
           }
         } else {
           const dz = cfg.sources.deezer ? await dzSearchAlbum(name, artist).catch(() => null) : null;

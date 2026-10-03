@@ -8,6 +8,7 @@ export interface AgentSources {
   coverart: boolean;
   wikipedia: boolean;
   lrclib: boolean;
+  fanart: boolean;
 }
 
 export const DEFAULT_SOURCES: AgentSources = {
@@ -17,6 +18,7 @@ export const DEFAULT_SOURCES: AgentSources = {
   coverart: true,
   wikipedia: true,
   lrclib: true,
+  fanart: true,
 };
 
 export interface AgentConfigData {
@@ -26,6 +28,7 @@ export interface AgentConfigData {
   batchSize: number;
   writeBack: "off" | "manual" | "auto";
   sources: AgentSources;
+  fanartApiKey: string;
   lastStage: "albums" | "artists";
 }
 
@@ -54,6 +57,7 @@ export async function ensureConfig(): Promise<AgentConfigData> {
     batchSize: row.batchSize,
     writeBack: row.writeBack === "auto" ? "auto" : row.writeBack === "off" ? "off" : "manual",
     sources,
+    fanartApiKey: row.fanartApiKey ?? "",
     lastStage: row.lastStage === "artists" ? "artists" : "albums",
   };
   configCache = { data, ts: Date.now() };
@@ -70,6 +74,7 @@ export async function updateConfig(patch: Partial<AgentConfigData>): Promise<Age
       ...(patch.healthIntervalMin !== undefined ? { healthIntervalMin: Math.max(1, Math.min(1440, Math.round(patch.healthIntervalMin))) } : {}),
       ...(patch.batchSize !== undefined ? { batchSize: Math.max(1, Math.min(100, Math.round(patch.batchSize))) } : {}),
       ...(patch.writeBack !== undefined ? { writeBack: patch.writeBack === "auto" ? "auto" : patch.writeBack === "off" ? "off" : "manual" } : {}),
+      ...(patch.fanartApiKey !== undefined ? { fanartApiKey: patch.fanartApiKey.trim() || null } : {}),
       ...(patch.lastStage !== undefined ? { lastStage: patch.lastStage } : {}),
       ...(patch.sources !== undefined ? { sources: JSON.stringify({ ...DEFAULT_SOURCES, ...patch.sources }) } : {}),
     },
@@ -88,6 +93,7 @@ export async function updateConfig(patch: Partial<AgentConfigData>): Promise<Age
     batchSize: row.batchSize,
     writeBack: row.writeBack === "auto" ? "auto" : row.writeBack === "off" ? "off" : "manual",
     sources,
+    fanartApiKey: row.fanartApiKey ?? "",
     lastStage: row.lastStage === "artists" ? "artists" : "albums",
   };
 }

@@ -59,7 +59,7 @@ src/
 │   ├── jellyfin.ts               # client API layer: paged queries, mappers, mutations
 │   ├── agent/                    # agent core: scheduler, config, jobs (health / scan),
 │   │                             #   internet sources (musicbrainz, deezer, itunes,
-│   │                             #   wikipedia, lrclib) — all rate-limited server-side
+│   │                             #   wikipedia, lrclib, fanart) — all rate-limited server-side
 │   ├── types.ts                  # domain model (Artist / Album / Song / Playlist)
 │   └── format.ts                 # duration helpers, dominant-color extraction
 ├── hooks/use-jf.ts               # useJfQuery: module-level cache + dedupe + invalidation
@@ -80,12 +80,22 @@ Every 45 min (configurable) the agent scans a small, polite batch of items (16 b
 | Gap | Sources (in order) | Result |
 | --- | --- | --- |
 | Missing album art | Deezer → iTunes → MusicBrainz + Cover Art Archive | Cover served automatically through the image proxy |
-| Missing artist photo | Deezer → Wikipedia thumbnail | Photo served through the image proxy |
+| Missing artist photo | **Fanart.tv** (needs free API key) → Deezer → Wikipedia thumbnail | Photo served through the image proxy |
 | Missing artist bio | Wikipedia | Rendered on the artist page with attribution |
 | Missing year / genre / track-count | Deezer → iTunes → MusicBrainz | Used for album metadata |
 | Missing lyrics | LRCLIB | Synced (LRC) or plain lyrics in the now-playing view, on demand when a track plays |
+| Discography gaps | MusicBrainz release-groups | "From the internet" section on artist pages (see below) |
+
+**Fanart.tv API key** (recommended for artist photos — Deezer's CDN blocks some networks): get a free personal key at [fanart.tv/get-an-api-key](https://fanart.tv/get-an-api-key/) and either paste it into **Agent → Settings → Fanart.tv API key** (persisted in the agent DB) or set the `FANARTTV_API_KEY` environment variable. The health check reports whether the key works ("API key working" / "API key rejected" / "no API key").
 
 The agent also **notices gaps as you browse**: whenever the image proxy serves a placeholder for an item it has no art for, that item is queued as "pending" and prioritised by the next scan. All scraped data is persisted in SQLite (Prisma) and attributed on-screen ("via Wikipedia · Library Agent", "Lyrics via LRCLIB").
+
+### Artist pages show the internet, not just the library
+
+Artist detail pages combine library data with the agent's internet knowledge:
+
+- **Bio** — the Jellyfin overview (if any) and the Wikipedia biography are shown together, each attributed ("From your Jellyfin library" / "Biography via Wikipedia · Library Agent").
+- **Discography** — below the library albums, a **"From the internet"** section lists the artist's MusicBrainz releases that are **not in your library** (albums first, then EPs/singles, newest first, with year, type and a "not in library" badge; each row links to MusicBrainz). The in-library diff is recomputed live, so newly-added albums drop out automatically.
 
 Rate-limiting: MusicBrainz is capped at 1 request/second with a descriptive User-Agent; other sources are gently throttled.
 
@@ -117,7 +127,7 @@ Every 5 min (configurable) the agent records a health snapshot covering:
 - **Library index** — album/song totals
 - **Media files** — Range-probes random tracks **grouped per share** (e.g. `/mnt/nas_share: 8/8 readable`, `/mnt1/unraid_share: 0/8 readable`) to pinpoint unmounted NAS shares; after a remount the score recovers automatically on the next check (recovery is called out explicitly, and a "Re-probe after remount" button forces an immediate re-check)
 - **Image pipeline** — samples upstream album art
-- **Internet sources** — reachability of MusicBrainz / Deezer / iTunes / CAA / Wikipedia / LRCLIB
+- **Internet sources** — reachability of MusicBrainz / Deezer / iTunes / CAA / Wikipedia / LRCLIB / Fanart.tv (incl. API-key state)
 - **Agent database, artwork disk cache (300 MB cap), process memory & event-loop lag**
 
 Each check reports `ok / warn / fail`, aggregated into an overall score (0–100) and an overall status (healthy / degraded / critical).
@@ -142,5 +152,5 @@ REST endpoints: `GET /api/agent/status`, `POST /api/agent/run`, `GET /api/agent/
 
 - [Feishin](https://github.com/jeffvli/feishin) by Jeff Vli — the original desktop/web client this project faithfully rebuilds.
 - [Jellyfin](https://jellyfin.org/) — the free software media system.
-- Agent data sources: [MusicBrainz](https://musicbrainz.org/), [Cover Art Archive](https://coverartarchive.org/), [Deezer public API](https://developers.deezer.com/api), [iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/), [Wikipedia REST API](https://www.mediawiki.org/wiki/API:REST_API), [LRCLIB](https://lrclib.net/).
+- Agent data sources: [MusicBrainz](https://musicbrainz.org/), [Cover Art Archive](https://coverartarchive.org/), [Deezer public API](https://developers.deezer.com/api), [iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/), [Wikipedia REST API](https://www.mediawiki.org/wiki/API:REST_API), [LRCLIB](https://lrclib.net/), [Fanart.tv](https://fanart.tv/) (optional API key).
 - Built with [Next.js](https://nextjs.org/), [Tailwind CSS](https://tailwindcss.com/), [shadcn/ui](https://ui.shadcn.com/), [zustand](https://github.com/pmndrs/zustand), [Prisma](https://www.prisma.io/) and [Radix UI](https://www.radix-ui.com/).
