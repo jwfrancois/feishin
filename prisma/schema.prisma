@@ -1,9 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// Library Agent — persistent state for the autonomous media-library manager
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,20 +8,68 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// One row per job execution (health check / library scan)
+model AgentRun {
+  id         String    @id @default(cuid())
+  jobType    String // "health" | "scan"
+  status     String    @default("running") // running | success | partial | failed
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+  processed  Int       @default(0) // items examined
+  enriched   Int       @default(0) // gaps filled with data
+  missing    Int       @default(0) // gaps confirmed unresolvable
+  error      String?
+  log        String? // newline-separated activity log (trimmed)
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// One scraped datum about one library item, keyed by (itemId, kind).
+// kind: "artwork" | "bio" | "metadata" | "lyrics"
+// status: "pending" (gap noticed, not yet looked up) | "found" | "missing" | "applied" | "error"
+model AgentFinding {
+  id           String   @id @default(cuid())
+  itemId       String
+  itemType     String // album | artist | song
+  itemName     String   @default("")
+  itemSubtitle String   @default("") // artist name (albums) / album name (songs)
+  kind         String
+  source       String   @default("") // deezer | itunes | coverart | musicbrainz | wikipedia | lrclib
+  status       String   @default("found")
+  payload      String   @default("{}") // JSON blob with the scraped data
+  summary      String   @default("") // human-readable one-liner for the dashboard
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([itemId, kind])
+  @@index([kind, status])
+  @@index([status])
+}
+
+// Point-in-time system health report
+model HealthSnapshot {
+  id            DateTime @id @default(now())
+  overall       String // healthy | degraded | critical
+  score         Int      @default(0) // 0-100
+  checks        String   @default("[]") // JSON [{name,status,latencyMs,detail}]
+  serverName    String   @default("")
+  serverVersion String   @default("")
+  serverLatency Int      @default(0)
+  albumCount    Int      @default(0)
+  songCount     Int      @default(0)
+  mediaReadable Float    @default(0) // 0..1 fraction of sampled files readable
+  cacheMb       Float    @default(0)
+  memoryMb      Float    @default(0)
+  internetOk    Boolean  @default(false)
+}
+
+// Singleton configuration row
+model AgentConfig {
+  id                String   @id @default("singleton")
+  enabled           Boolean  @default(true)
+  scanIntervalMin   Int      @default(45)
+  healthIntervalMin Int      @default(5)
+  batchSize         Int      @default(16)
+  sources           String   @default("{}") // JSON {musicbrainz,deezer,itunes,coverart,wikipedia,lrclib}
+  lastStage         String   @default("albums") // albums | artists — alternates between runs
+  updatedAt         DateTime @updatedAt
 }

@@ -10,6 +10,7 @@ A faithful web rebuild of [Feishin](https://github.com/jeffvli/feishin) — the 
 - **Favorites & likes** — favorite hearts and the thumbs-up like button write straight back to Jellyfin (`UserData.IsFavorite` / `UserData.Likes`).
 - **Server-backed playlists** — create, rename, delete, add/remove tracks; all mutations hit the Jellyfin API.
 - **Synced lyrics** — the now-playing view fetches Jellyfin's lyrics API (10.9+) and highlights lines in time with playback.
+- **Library Agent (autonomous manager)** — a background agent that scrapes the internet to fill your library's gaps and continuously monitors system health (see below).
 - **Detail pages** — album pages with dominant-color hero, artist pages with blurred photo hero, bio, discography and top songs, genre stripes and genre drill-downs.
 - **Server-side caching** — a same-origin JSON proxy with per-route TTL caching and stale-while-revalidate keeps a 100k+-track library feeling snappy.
 - **Feishin UI, faithfully** — 90px player bar, sidebar with playlists, right-side queue panel, song context menus, dark theme, skeleton loaders, toasts.
@@ -42,37 +43,84 @@ Authentication tries `POST /Users/AuthenticateByName` first and falls back to th
 src/
 ├── app/
 │   ├── page.tsx                  # single-route app (zustand view routing, like Feishin)
+│   ├── instrumentation.ts        # boots the Library Agent scheduler with the server
 │   └── api/
 │       ├── jf/[...path]/route.ts # JSON proxy: cached GET (SWR), POST/DELETE passthrough,
 │       │                         #   __ready / __configure control endpoints
 │       ├── jf-audio/[id]/route.ts# audio stream proxy (HTTP Range passthrough,
 │       │                         #   universal-transcode fallback)
-│       └── jf-img/[id]/route.ts  # image proxy with on-disk cache (.cache/jf-img)
-│                                 #   and upstream concurrency limiting
+│       ├── jf-img/[id]/route.ts  # image proxy with on-disk cache (.cache/jf-img),
+│       │                         #   upstream concurrency limiting + agent artwork fallback
+│       └── agent/…               # Library Agent: status / run / findings / health /
+│                                 #   config / enrichment endpoints
 ├── lib/
 │   ├── jf-server.ts              # server-side connection manager: auth, music-library
 │   │                             #   discovery, TTL cache (globalThis singletons)
 │   ├── jellyfin.ts               # client API layer: paged queries, mappers, mutations
+│   ├── agent/                    # agent core: scheduler, config, jobs (health / scan),
+│   │                             #   internet sources (musicbrainz, deezer, itunes,
+│   │                             #   wikipedia, lrclib) — all rate-limited server-side
 │   ├── types.ts                  # domain model (Artist / Album / Song / Playlist)
 │   └── format.ts                 # duration helpers, dominant-color extraction
 ├── hooks/use-jf.ts               # useJfQuery: module-level cache + dedupe + invalidation
 ├── store/                        # zustand stores (auth, player, router, settings)
-└── components/feishin/           # views, player bar, song table, shared widgets
+└── components/feishin/           # views (incl. agent dashboard), player bar, song table
 ```
 
 **Why a proxy?** Jellyfin credentials never reach the browser; the Next.js server holds the token, injects `userId`/`parentId` into queries, and serves images/audio through cached same-origin routes. This also enables aggressive caching (per-endpoint TTLs, stale-while-revalidate, in-flight dedupe) that a thin client can't do alone.
 
+## Library Agent
+
+A **cloud agent** runs inside the Next.js server process (started via `src/instrumentation.ts` on boot, tick loop every 30 s) and services the media library like a manager. Its two recurring jobs:
+
+### 1. Enrichment — scrape the internet for what the library is missing
+
+Every 45 min (configurable) the agent scans a small, polite batch of items (16 by default, alternating albums/artists) and fills gaps using free, key-less public APIs:
+
+| Gap | Sources (in order) | Result |
+| --- | --- | --- |
+| Missing album art | Deezer → iTunes → MusicBrainz + Cover Art Archive | Cover served automatically through the image proxy |
+| Missing artist photo | Deezer → Wikipedia thumbnail | Photo served through the image proxy |
+| Missing artist bio | Wikipedia | Rendered on the artist page with attribution |
+| Missing year / genre / track-count | Deezer → iTunes → MusicBrainz | Used for album metadata |
+| Missing lyrics | LRCLIB | Synced (LRC) or plain lyrics in the now-playing view, on demand when a track plays |
+
+The agent also **notices gaps as you browse**: whenever the image proxy serves a placeholder for an item it has no art for, that item is queued as "pending" and prioritised by the next scan. All scraped data is persisted in SQLite (Prisma) and attributed on-screen ("via Wikipedia · Library Agent", "Lyrics via LRCLIB").
+
+Rate-limiting: MusicBrainz is capped at 1 request/second with a descriptive User-Agent; other sources are gently throttled.
+
+### 2. Health monitoring
+
+Every 5 min (configurable) the agent records a health snapshot covering:
+
+- **Jellyfin server** — reachability, version, response latency
+- **Authentication** — user session / API-key validity
+- **Library index** — album/song totals
+- **Media files** — Range-probes random tracks to detect **unmounted media shares** (e.g. a NAS folder the server can no longer read)
+- **Image pipeline** — samples upstream album art
+- **Internet sources** — reachability of MusicBrainz / Deezer / iTunes / CAA / Wikipedia / LRCLIB
+- **Agent database, artwork disk cache (300 MB cap), process memory & event-loop lag**
+
+Each check reports `ok / warn / fail`, aggregated into an overall score (0–100) and an overall status (healthy / degraded / critical).
+
+### Agent dashboard
+
+The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable), recent-run logs, and settings (intervals, batch size, per-source toggles, pause/resume). Manual "Health check" / "Scan library" triggers are available from the header.
+
+REST endpoints: `GET /api/agent/status`, `POST /api/agent/run`, `GET /api/agent/findings`, `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`.
+
 ## Known limitations
 
 - **Audio playback depends on the server's media share.** If a track's file can't be read by the Jellyfin server (unmounted music folder), the app detects the missing file, shows a "Skipped — unavailable on server" toast and auto-advances; after three consecutive failures it pauses to avoid churning through the queue. Fully readable shares stream and seek normally.
-- **Image-less items get generated placeholders.** Items without embedded/folder art (and items whose art lives on an offline share) are rendered as deterministic gradient initials tiles by the image proxy instead of broken images.
+- **Image-less items get generated placeholders — until the agent finds real art.** Items without embedded/folder art (and items whose art lives on an offline share) are rendered as deterministic gradient initials tiles; the Library Agent queues them and replaces the tiles with internet-sourced covers once found.
 - **Star ratings are hidden on Jellyfin.** Jellyfin 10.11 removed the numeric 0–10 rating API (only like/dislike remains), and upstream Feishin shows star ratings for Navidrome/Subsonic only. This rebuild follows suit and uses Jellyfin's native like (`UserData.Likes`) instead.
 - **Genre counts** — Jellyfin 10.11's `/Genres` endpoint no longer exposes `ItemCount` and facets are ignored, so genre stripes show names only.
-- **Lyrics** are shown only for tracks that have lyrics files on the server.
+- **Lyrics** are shown for tracks that have lyrics files on the server; anything else is looked up on LRCLIB by the Library Agent when played (tracks absent from LRCLIB still show "No lyrics available").
 - Desktop-only Feishin features (MPV audio backend, DLNA) are represented in the UI but not functional in this web build.
 
 ## Credits
 
 - [Feishin](https://github.com/jeffvli/feishin) by Jeff Vli — the original desktop/web client this project faithfully rebuilds.
 - [Jellyfin](https://jellyfin.org/) — the free software media system.
-- Built with [Next.js](https://nextjs.org/), [Tailwind CSS](https://tailwindcss.com/), [shadcn/ui](https://ui.shadcn.com/), [zustand](https://github.com/pmndrs/zustand) and [Radix UI](https://www.radix-ui.com/).
+- Agent data sources: [MusicBrainz](https://musicbrainz.org/), [Cover Art Archive](https://coverartarchive.org/), [Deezer public API](https://developers.deezer.com/api), [iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/), [Wikipedia REST API](https://www.mediawiki.org/wiki/API:REST_API), [LRCLIB](https://lrclib.net/).
+- Built with [Next.js](https://nextjs.org/), [Tailwind CSS](https://tailwindcss.com/), [shadcn/ui](https://ui.shadcn.com/), [zustand](https://github.com/pmndrs/zustand), [Prisma](https://www.prisma.io/) and [Radix UI](https://www.radix-ui.com/).

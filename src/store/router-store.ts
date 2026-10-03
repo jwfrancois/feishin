@@ -15,6 +15,7 @@ export type Route =
   | { view: "playlist"; id: string }
   | { view: "search"; query?: string }
   | { view: "favorites"; tab?: "tracks" | "albums" | "artists" }
+  | { view: "agent" }
   | { view: "settings"; section?: string }
   | { view: "now-playing" };
 

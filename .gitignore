@@ -54,3 +54,4 @@ server.log
 /skills/
 # runtime image cache
 /.cache/
+db/custom.db

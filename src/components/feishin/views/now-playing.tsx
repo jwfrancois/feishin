@@ -93,12 +93,31 @@ function LyricsPanel() {
     song ? `lyrics:${song.id}` : null,
     async () => {
       if (!song) return null;
-      return fetchPlainLyricsAsSynced(song.id, song.duration || 0);
+      // 1) Jellyfin's own lyrics
+      const server = await fetchPlainLyricsAsSynced(song.id, song.duration || 0);
+      if (server && server.length > 0) return { lines: server, source: "server" as const };
+      // 2) Library Agent fallback — live LRCLIB lookup, cached in the agent DB
+      try {
+        const res = await fetch(
+          `/api/agent/enrichment/${song.id}?kind=lyrics&fetch=1&name=${encodeURIComponent(song.name)}&artist=${encodeURIComponent(song.artist)}${
+            song.album ? `&album=${encodeURIComponent(song.album)}` : ""
+          }&duration=${Math.round(song.duration || 0)}`,
+          { cache: "no-store" },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { lines?: { time: number; text: string }[] | null };
+          if (data.lines && data.lines.length > 0) return { lines: data.lines, source: "agent" as const };
+        }
+      } catch {
+        /* agent unavailable */
+      }
+      return null;
     },
     10 * 60_000,
   );
 
-  const lyrics: LyricLine[] = data ?? [];
+  const lyrics: LyricLine[] = data?.lines ?? [];
+  const agentLyrics = data?.source === "agent";
   const activeIndex = lyrics.length > 0 ? getActiveLyricIndex(lyrics, position) : 0;
 
   useEffect(() => {
@@ -138,6 +157,11 @@ function LyricsPanel() {
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto py-8 text-center [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-testid="lyrics-panel">
+      {agentLyrics && (
+        <div className="mx-auto mb-2 w-fit rounded-full bg-white/10 px-3 py-1 text-[10.5px] font-bold uppercase tracking-[0.1em] text-white/60">
+          Lyrics via LRCLIB · Library Agent
+        </div>
+      )}
       {lyrics.map((line, i) => (
         <p
           key={i}

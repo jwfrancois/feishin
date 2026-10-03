@@ -22,6 +22,7 @@ import { GenresView, GenreDetailView } from "./views/genres";
 import { PlaylistsView, PlaylistDetailView } from "./views/playlists";
 import { SearchView } from "./views/search";
 import { FavoritesView } from "./views/favorites";
+import { AgentView } from "./views/agent";
 import { SettingsView } from "./views/settings";
 import { NowPlayingView } from "./views/now-playing";
 
@@ -59,6 +60,8 @@ function MainContent() {
       return <SearchView initialQuery={"query" in route ? route.query : ""} />;
     case "favorites":
       return <FavoritesView initialTab={"tab" in route && route.tab === "albums" ? "Albums" : route.tab === "artists" ? "Artists" : "Songs"} />;
+    case "agent":
+      return <AgentView />;
     case "settings":
       return <SettingsView section={"section" in route ? route.section : "general"} />;
     case "now-playing":

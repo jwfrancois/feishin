@@ -1,11 +1,15 @@
 // Feishin rebuild — image proxy with on-disk cache + upstream concurrency limiting
 // Jellyfin image extraction is slow (~1-2s each); we cache bytes on disk so repeat
 // views are instant and parallel page loads don't hammer the server.
+// Library Agent integration: when the upstream art is unavailable, the proxy
+// serves artwork the agent scraped from the internet (AgentFinding), and records
+// previously-unseen gaps as "pending" so the next scan resolves them.
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { jfFetch, getConnectionRaw } from "@/lib/jf-server";
+import { AGENT_USER_AGENT } from "@/lib/agent/http";
 
 export const dynamic = "force-dynamic";
 
@@ -84,8 +88,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     const upstream = await withSlot(() => jfFetch(`Items/${id}/Images/Primary`, { params }));
     if (!upstream.ok) {
       // The item has no Primary image (or the server can't read its media share right now).
-      // Serve a deterministic initials tile instead of a raw 404: keeps the browser console
-      // clean and matches how feishin/Jellyfin render image-less items.
+      // 1) If the Library Agent previously scraped artwork for this item, serve that.
+      // 2) Otherwise record the gap as "pending" so the agent's next scan resolves it,
+      //    and serve a deterministic initials tile in the meantime.
+      const agentArt = await tryAgentArtwork(id, key);
+      if (agentArt) return agentArt;
+      void recordPendingArtwork(id, sp.get("name"), sp.get("artist"));
       return imagePlaceholder(id, sp.get("name"));
     }
 
@@ -110,6 +118,70 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   } catch (err) {
     void getConnectionRaw; // keep import tree-shake-safe
     return NextResponse.json({ error: err instanceof Error ? err.message : "Image proxy failed" }, { status: 502 });
+  }
+}
+
+/** Serve artwork the Library Agent scraped (payload.url), disk-caching it under the normal key. */
+async function tryAgentArtwork(id: string, key: string): Promise<Response | null> {
+  try {
+    const { db } = await import("@/lib/db");
+    const finding = await db.agentFinding.findUnique({ where: { itemId_kind: { itemId: id, kind: "artwork" } } });
+    if (!finding || !"found_applied".includes(finding.status)) return null;
+    const payload = JSON.parse(finding.payload || "{}") as { url?: string };
+    if (!payload.url) return null;
+    const res = await fetch(payload.url, {
+      headers: { "User-Agent": AGENT_USER_AGENT },
+      signal: AbortSignal.timeout(15_000),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 1024) return null; // too small to be real art
+    const ct = res.headers.get("Content-Type") ?? sniffContentType(buf);
+    if (!ct.startsWith("image/")) return null;
+    // persist so the next request is a pure disk-cache hit
+    try {
+      if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+      writeFileSync(cachePath(key), buf);
+      trimCacheIfNeeded();
+    } catch {
+      /* best effort */
+    }
+    void db.agentFinding
+      .update({ where: { itemId_kind: { itemId: id, kind: "artwork" } }, data: { status: "applied" } })
+      .catch(() => undefined);
+    const headers = new Headers({
+      "Content-Type": ct,
+      "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400",
+      "Content-Length": String(buf.length),
+      "X-Agent-Artwork": finding.source,
+    });
+    return new Response(buf, { status: 200, headers });
+  } catch {
+    return null;
+  }
+}
+
+/** Record an image gap so the Library Agent scan job resolves it from the internet. */
+async function recordPendingArtwork(id: string, name: string | null, artist: string | null): Promise<void> {
+  try {
+    const { db } = await import("@/lib/db");
+    const existing = await db.agentFinding.findUnique({ where: { itemId_kind: { itemId: id, kind: "artwork" } } });
+    // only queue fresh gaps — never resurrect confirmed-missing items or clobber scraped/applied art
+    if (existing) return;
+    await db.agentFinding.create({
+      data: {
+        itemId: id,
+        kind: "artwork",
+        status: "pending",
+        itemType: "album",
+        itemName: name ?? "",
+        itemSubtitle: artist ?? "",
+        summary: "Gap noticed by the image proxy — awaiting scan",
+      },
+    });
+  } catch {
+    /* never let bookkeeping break image serving */
   }
 }
 

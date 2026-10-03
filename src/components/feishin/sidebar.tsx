@@ -17,6 +17,7 @@ import {
   ArrowUpNarrowWide,
   MoreVertical,
   ListMusic,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouterStore, type Route } from "@/store/router-store";
@@ -37,6 +38,7 @@ const LIBRARY_ITEMS: { label: string; icon: React.ReactNode; route: Route }[] = 
   { label: "Albums", icon: <Disc3 size={17} />, route: { view: "albums" } },
   { label: "Artists", icon: <User size={17} />, route: { view: "artists" } },
   { label: "Favorites", icon: <Heart size={17} />, route: { view: "favorites" } },
+  { label: "Agent", icon: <Bot size={17} />, route: { view: "agent" } },
   { label: "Settings", icon: <SettingsIcon size={17} />, route: { view: "settings" } },
 ];
 

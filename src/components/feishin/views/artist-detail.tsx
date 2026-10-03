@@ -5,6 +5,7 @@ import { Play, ChevronDown, Radio } from "lucide-react";
 import { setLike, fetchArtist, fetchArtistAlbums, fetchArtistTopSongs } from "@/lib/jellyfin";
 import type { Artist, Album, Song } from "@/lib/types";
 import { useJfQuery } from "@/hooks/use-jf";
+import { getAgentFinding } from "@/lib/agent-client";
 import { useRouterStore } from "@/store/router-store";
 import { usePlayerStore } from "@/store/player-store";
 import { ItemImage, LikeButton, FavoriteHeart, Kebab } from "../shared";
@@ -33,6 +34,20 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
 
   const [likeOverride, setLikeOverride] = useState<boolean | null>(null);
   const liked = likeOverride ?? !!artist?.likes;
+
+  // Library Agent: when Jellyfin has no bio, the agent supplies one from Wikipedia
+  // (first visit triggers the live lookup; afterwards it is served from the agent DB).
+  // NOTE: hook must run unconditionally — null key when not needed.
+  const needsAgentBio = !!artist && !artist.overview?.trim();
+  const agentBioQ = useJfQuery(
+    needsAgentBio && artist ? `agent:bio:${artist.id}` : null,
+    async () => {
+      const a = artist!;
+      const { finding } = await getAgentFinding(a.id, "bio", { name: a.name, fetch: true });
+      return finding && finding.status === "found" && typeof finding.payload.text === "string" ? finding : null;
+    },
+    30 * 60_000,
+  );
 
   const toggleArtistLike = () => {
     if (!artist) return;
@@ -63,7 +78,9 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
   }
 
   const trackCount = albums.reduce((n, a) => n + (a.trackCount || 0), 0);
-  const bio = artist.overview?.trim() || DEFAULT_BIO_TEMPLATE(artist.name);
+  const agentBio = needsAgentBio ? agentBioQ.data ?? null : null;
+  const agentBioText = typeof agentBio?.payload.text === "string" ? agentBio.payload.text : "";
+  const bio = artist.overview?.trim() || agentBioText || DEFAULT_BIO_TEMPLATE(artist.name);
 
   return (
     <div className="pb-24" data-testid="artist-detail">
@@ -175,6 +192,11 @@ export function ArtistDetailView({ artistId }: { artistId: string }) {
       {/* about */}
       <div className="px-8 pb-6">
         <h3 className="mb-2 text-xl font-extrabold text-[var(--fg)]">About {artist.name}</h3>
+        {agentBio && (
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--fg-dim)]">
+            Biography via {agentBio.source === "wikipedia" ? "Wikipedia" : agentBio.source} · Library Agent
+          </div>
+        )}
         <p
           className={`max-w-4xl whitespace-pre-line text-[13.5px] leading-relaxed text-[var(--fg-dim)] ${aboutExpanded ? "" : "line-clamp-3"}`}
         >

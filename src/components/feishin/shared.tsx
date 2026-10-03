@@ -1,6 +1,6 @@
 "use client";
 // Feishin rebuild — shared small components (rating, favorite, images, headers)
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Heart, Star, MoreHorizontal, ListMusic, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ContextMenuNS as ContextMenu } from "@/components/ui/context-menu";
@@ -121,14 +121,13 @@ export function ItemImage({
   className?: string;
   rounded?: boolean;
 }) {
-  const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  // reset state when the source changes
-  useEffect(() => {
-    setFailed(false);
-    setLoaded(false);
-  }, [src]);
+  // reset failure/load state when the source changes (adjust-during-render pattern)
+  const [state, setState] = useState({ src, failed: false, loaded: false });
+  if (state.src !== src) {
+    setState({ src, failed: false, loaded: false });
+  }
+  const failed = state.failed;
+  const loaded = state.loaded;
 
   return (
     <div
@@ -142,8 +141,8 @@ export function ItemImage({
           className={cn("h-full w-full object-cover transition-opacity duration-300", loaded ? "opacity-100" : "opacity-0")}
           draggable={false}
           loading="lazy"
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
+          onLoad={() => setState((s) => (s.loaded ? s : { ...s, loaded: true }))}
+          onError={() => setState((s) => (s.failed ? s : { ...s, failed: true }))}
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center text-[var(--fg-dim)]">

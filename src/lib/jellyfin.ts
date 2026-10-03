@@ -27,10 +27,10 @@ export async function jf<T = unknown>(path: string, params?: Record<string, stri
   return res.json() as Promise<T>;
 }
 
-export const jfImageUrl = (itemId: string, tag?: string, maxWidth = 300, name?: string): string =>
+export const jfImageUrl = (itemId: string, tag?: string, maxWidth = 300, name?: string, artist?: string): string =>
   `/api/jf-img/${itemId}?maxWidth=${maxWidth}${tag ? `&tag=${tag}` : ""}${
     name ? `&name=${encodeURIComponent(name.slice(0, 80))}` : ""
-  }`;
+  }${artist ? `&artist=${encodeURIComponent(artist.slice(0, 80))}` : ""}`;
 
 export const jfAudioUrl = (itemId: string): string => `/api/jf-audio/${itemId}`;
 
@@ -79,7 +79,7 @@ export function mapAlbum(item: JfItem): Album {
     artistName: item.AlbumArtists?.[0]?.Name ?? item.AlbumArtist ?? item.Artists?.[0] ?? "Unknown artist",
     year: yearOf(item),
     genre: item.Genres?.[0] ?? "",
-    coverUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 300, item.Name),
+    coverUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 300, item.Name, item.AlbumArtists?.[0]?.Name ?? item.AlbumArtist ?? item.Artists?.[0]),
     coverTag: item.ImageTags?.Primary,
     color: [70, 78, 96],
     trackIds: [],
@@ -101,7 +101,7 @@ export function mapSong(item: JfItem): Song {
     artistId: item.AlbumArtists?.[0]?.Id ?? item.ArtistItems?.find((a) => a.Name === artistName)?.Id,
     album: item.Album ?? "",
     albumId: item.AlbumId,
-    albumCoverUrl: item.AlbumId ? jfImageUrl(item.AlbumId, undefined, 300, item.Album) : undefined,
+    albumCoverUrl: item.AlbumId ? jfImageUrl(item.AlbumId, undefined, 300, item.Album, artistName) : undefined,
     duration: (item.RunTimeTicks ?? 0) / 1e7,
     trackNumber: item.IndexNumber,
     year: yearOf(item),

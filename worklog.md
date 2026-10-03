@@ -123,3 +123,24 @@ Work Log:
 Stage Summary:
 - All console-noise sources from the user's log eliminated: no more Started 502, no image 404 storms, no bare-ID requests, no wasteful universal 500s; unavailable tracks degrade gracefully with toasts.
 - README.md known-limitations section updated to match new behavior.
+
+---
+Task ID: 5
+Agent: main (Super Z)
+Task: Build and integrate a cloud agent ("Library Agent") that services the media library (internet metadata scraping) and monitors system health
+
+Work Log:
+- Designed autonomous agent running inside the Next.js server: instrumentation.ts boots a globalThis-singleton scheduler (30s tick) that launches two due jobs — health check (every 5 min) and library scan (every 45 min), both concurrency-guarded with full run bookkeeping (AgentRun rows with status/duration/counters/log).
+- Prisma schema replaced (User/Post scaffold out): AgentRun, AgentFinding (unique itemId+kind; statuses pending/found/missing/applied), HealthSnapshot (last 240 kept), AgentConfig singleton (enabled, intervals, batchSize, per-source toggles, stage alternation); db:push + generate OK.
+- Internet sources (all key-less, rate-limited, descriptive UA): MusicBrainz (1 req/s limiter; release-group/artist search) + Cover Art Archive front art; Deezer (album covers xl, artist pictures, release metadata); iTunes Search (600x600 artwork, year/genre); Wikipedia REST (artist bios w/ disambiguation skip); LRCLIB (synced LRC + plain lyrics).
+- Scan job: phase 1 resolves pending artwork queue (gaps the image proxy noticed while serving); phase 2 random batch alternating albums/artists filling art/bio/metadata gaps only (Jellyfin item field checks incl. Overview after adding fields=Genres,Overview fix); results upserted into AgentFinding.
+- Health job: 9 checks — Jellyfin reachability+version+latency, auth state, library counts, media-file readability (Range-probe 6 random tracks; detects unmounted shares like /mnt1/unraid_share), image pipeline, internet sources (GET probes, any-response=up after HEAD false-negative on MusicBrainz), agent DB latency, artwork cache size (300MB cap), process memory/event-loop lag; aggregated score 0-100 + healthy/degraded/critical.
+- App integration ("information the library can use"): jf-img proxy on upstream miss now serves agent-scraped art (disk-cached under normal key, X-Agent-Artwork header, finding marked applied) and records never-seen gaps as pending; artist-detail renders Wikipedia bio with attribution when Jellyfin Overview empty (hook-order bug caught and fixed); now-playing falls back to LRCLIB synced lyrics via agent with "via LRCLIB" badge; jfImageUrl passes artist param for better source matching.
+- Agent API: GET /api/agent/status (config+runtime+last runs+counts), POST /api/agent/run (fire-and-forget after fixing await-entire-job flaw), GET /api/agent/findings (filter/paginate), GET /api/agent/health?history=N, GET|PATCH /api/agent/config, GET /api/agent/enrichment/[itemId] (kind=bio|artwork|metadata|lyrics, fetch=1 live-lookup + persist, LRC parser).
+- Agent dashboard view (sidebar "Agent" with Bot icon, route "agent"): status pill, Pause/Resume, manual Health check/Scan buttons, 4 stat cards, tabs Health (checks + score sparkline SVG), Enrichments (filterable table 80 rows), Activity (run cards with expandable logs), Settings (schedule numbers + 6 source toggles + explainer); 5s status polling while mounted. Fixed lint errors: setState-in-effect in shared.tsx ItemImage and agent NumberField via adjust-during-render pattern.
+- Verified end-to-end: scheduler auto-booted (booted:true), first scan enriched 12 bios; health snapshot correctly CRITICAL 59/100 flagging 0/6 media readable on /mnt1/unraid_share + 6/6 internet sources; bio enrichment live (Nelly Furtado Wikipedia extract); lyrics live (Promiscuous, 78 synced LRC lines); artwork cycle proven (pending "Off The Wall" etc -> iTunes covers found -> jf-img served 112KB jpeg with x-agent-artwork: itunes -> disk cache hit); agent-browser e2e 11/11 PASS, 131 requests all 200, zero console errors; tsc src clean; lint 0 errors; Prisma query log noise disabled (log: error,warn).
+- README.md: added Library Agent section (jobs, sources table, health checks, dashboard, endpoints), updated features/architecture/limitations/credits.
+
+Stage Summary:
+- The app now has an autonomous library manager: it fills artwork/bio/metadata/lyrics gaps from the internet (rate-limited, attributed) and reports real system health (including the user's unmounted media share — surfaced as critical with details).
+- New files: src/instrumentation.ts, src/lib/agent/{http,config,scheduler}.ts, src/lib/agent/sources/{musicbrainz,deezer,itunes,wikipedia,lrclib}.ts, src/lib/agent/jobs/{scan,health}.ts, src/app/api/agent/* (6 routes), src/components/feishin/views/agent.tsx, src/lib/agent-client.ts; prisma/schema.prisma replaced; db at db/custom.db (gitignored).
