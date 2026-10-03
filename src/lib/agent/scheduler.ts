@@ -8,11 +8,13 @@ import { runHealthJob, recordHealthSnapshot } from "./jobs/health";
 import { runScanJob } from "./jobs/scan";
 import { runAuditJob } from "./jobs/audit";
 import { runReleasesJob } from "./jobs/releases";
+import { runDigestSnapshot } from "./jobs/digest";
 
-export type JobId = "health" | "scan" | "audit" | "releases";
+export type JobId = "health" | "scan" | "audit" | "releases" | "digest";
 // fixed schedules for the audit-style jobs (no config UI yet — sensible defaults)
 const AUDIT_INTERVAL_MIN = 60; // rolling audit window — hourly drips cover even 6-figure libraries
 const RELEASES_INTERVAL_MIN = 720; // release radar twice a day
+const DIGEST_INTERVAL_MIN = 1440; // play-count snapshot for the listening digest — daily
 
 interface AgentRuntime {
   timer: ReturnType<typeof setInterval> | null;
@@ -87,6 +89,12 @@ export async function runJobNow(job: JobId, trigger: "manual" | "schedule" = "ma
       enriched = result.enriched;
       missing = result.missing;
       log = result.logLines.join("\n");
+    } else if (job === "digest") {
+      const result = await runDigestSnapshot();
+      processed = result.processed;
+      enriched = result.enriched;
+      missing = result.missing;
+      log = result.logLines.join("\n");
     } else {
       const result = await runScanJob();
       processed = result.processed;
@@ -128,11 +136,12 @@ async function tick(): Promise<void> {
     const cfg = await ensureConfig();
     if (!cfg.enabled) return;
     const now = Date.now();
-    const [healthAt, scanAt, auditAt, releasesAt] = await Promise.all([
+    const [healthAt, scanAt, auditAt, releasesAt, digestAt] = await Promise.all([
       lastRunAt("health"),
       lastRunAt("scan"),
       lastRunAt("audit"),
       lastRunAt("releases"),
+      lastRunAt("digest"),
     ]);
     if (!runtime.running.has("health") && now - healthAt >= cfg.healthIntervalMin * 60_000) {
       void runJobNow("health", "schedule");
@@ -145,6 +154,9 @@ async function tick(): Promise<void> {
     }
     if (!runtime.running.has("releases") && now - releasesAt >= RELEASES_INTERVAL_MIN * 60_000) {
       void runJobNow("releases", "schedule");
+    }
+    if (!runtime.running.has("digest") && now - digestAt >= DIGEST_INTERVAL_MIN * 60_000) {
+      void runJobNow("digest", "schedule");
     }
   } catch (err) {
     if (process.env.NODE_ENV !== "production") console.warn("[agent] tick error:", err instanceof Error ? err.message : err);

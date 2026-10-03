@@ -3,8 +3,8 @@
 // Master bypass, output readout, spectrum analyzer + L/R peak meters, preamp,
 // 10-band graphic EQ with presets, headphone crossfeed, stereo width, balance,
 // dynamics compressor, loudness normalization. All changes apply live.
-import { useEffect, useState } from "react";
-import { Power, RotateCcw, AudioWaveform, Sparkles, Loader2, BadgeCheck, Undo2 } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
+import { Power, RotateCcw, AudioWaveform, Sparkles, Loader2, BadgeCheck, Undo2, SlidersHorizontal } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import { hifiEngine, type HifiOutputInfo } from "@/lib/audio/hifi-engine";
 import { useHifiStore, useHifiUi } from "@/store/hifi-store";
-import { EQ_BANDS, EQ_PRESETS, EQ_MIN_DB, EQ_MAX_DB } from "@/lib/audio/eq-presets";
+import { EQ_BANDS, EQ_PRESETS, EQ_PRESET_GROUPS, EQ_MIN_DB, EQ_MAX_DB, type EqPresetId } from "@/lib/audio/eq-presets";
 import { reanalyzeCurrentProfile } from "./agent-auto-eq";
 import { HifiVisualizer } from "./hifi-visualizer";
 
@@ -188,6 +188,19 @@ export function HifiPanel() {
                       <span className="rounded bg-[var(--primary)]/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-[var(--primary)]">
                         {Math.round(s.agentProfile.confidence * 100)}%
                       </span>
+                      {s.agentProfile.presetId && s.agentProfile.presetName ? (
+                        <button
+                          type="button"
+                          title={`Curve built on the ${s.agentProfile.presetName} studio preset — click to snap to its exact gains`}
+                          onClick={() => {
+                            if (s.agentProfile?.presetId) s.applyPreset(s.agentProfile.presetId as EqPresetId);
+                          }}
+                          className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-semibold text-[var(--fg-dim)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                          data-testid="hifi-agent-preset-chip"
+                        >
+                          <SlidersHorizontal size={10} /> {s.agentProfile.presetName}
+                        </button>
+                      ) : null}
                     </div>
                     <div className="flex items-center gap-1.5">
                       <button
@@ -265,12 +278,19 @@ export function HifiPanel() {
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content align="start" sideOffset={6} className="fs-menu-content max-h-72 overflow-y-auto">
-                  {EQ_PRESETS.map((p) => (
-                    <DropdownMenu.Item key={p.id} onSelect={() => s.applyPreset(p.id)} className="flex flex-col items-start">
-                      <span className="text-[12px] font-semibold">{p.name}</span>
-                      <span className="text-[10px] text-[var(--fg-dim)]">{p.description}</span>
-                    </DropdownMenu.Item>
+                <DropdownMenu.Content align="start" sideOffset={6} className="fs-menu-content max-h-80 overflow-y-auto">
+                  {EQ_PRESET_GROUPS.map((group) => (
+                    <Fragment key={group.id}>
+                      <DropdownMenu.Label className="px-2 pb-1 pt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--fg-dim)]/80">
+                        {group.label}
+                      </DropdownMenu.Label>
+                      {group.presets.map((p) => (
+                        <DropdownMenu.Item key={p.id} onSelect={() => s.applyPreset(p.id)} className="flex flex-col items-start">
+                          <span className="text-[12px] font-semibold">{p.name}</span>
+                          <span className="text-[10px] text-[var(--fg-dim)]">{p.description}</span>
+                        </DropdownMenu.Item>
+                      ))}
+                    </Fragment>
                   ))}
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>

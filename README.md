@@ -6,8 +6,9 @@ A faithful web rebuild of [Feishin](https://github.com/jeffvli/feishin) — the 
 
 - **Live Jellyfin integration** — home, albums, artists, tracks, genres, playlists, search and favorites all render real data from your server. No mock layer anywhere in the app.
 - **Full-featured player** — play/pause/stop, seek, shuffle, repeat (off/all/one), volume + mute, queue management ("play next" / "add later"), keyboard hotkeys (space, arrows, Ctrl+arrows for track skip).
-- **Hi-Fi Studio sound system** — a real Web Audio DSP chain: preamp, 10-band parametric EQ with 21 studio presets, headphone crossfeed, mid/side stereo width, balance, 4-mode dynamics compressor and loudness normalization — plus a canvas spectrum analyzer with L/R peak meters (see below).
-- **Agent Auto-EQ** — the Library Agent analyzes the playing track or album (library genres + Deezer + MusicBrainz) and adapts the sound output automatically, with a confidence score and rationale; manual control always wins (see below).
+- **Hi-Fi Studio sound system** — a real Web Audio DSP chain: preamp, 10-band parametric EQ with 29 studio presets grouped into Genre / Studio / Environment, headphone crossfeed, mid/side stereo width, balance, 4-mode dynamics compressor and loudness normalization — plus a canvas spectrum analyzer with L/R peak meters (see below).
+- **Agent Auto-EQ** — the Library Agent analyzes the playing track or album (library genres + Deezer + MusicBrainz), adapts the sound output automatically and shows which **studio preset** its curve is built on, with a confidence score and rationale; manual control always wins (see below).
+- **Monthly listening digest** — the agent snapshots per-artist play counts daily and ranks your most-played artists of the month (month-to-date, falling back to a trailing-30-day window), with click-through to artist pages (see below).
 - **Playback reporting** — play starts/progress/stops are reported back to Jellyfin so your play counts and "recently played" stay in sync.
 - **Favorites & likes** — favorite hearts and the thumbs-up like button write straight back to Jellyfin (`UserData.IsFavorite` / `UserData.Likes`).
 - **Server-backed playlists** — create, rename, delete, add/remove tracks; all mutations hit the Jellyfin API.
@@ -78,7 +79,7 @@ src/
 │   │                             #   discovery, TTL cache (globalThis singletons)
 │   ├── jellyfin.ts               # client API layer: paged queries, mappers, mutations
 │   ├── audio/                    # Hi-Fi DSP: hifi-engine.ts (Web Audio chain) +
-│   │                             #   eq-presets.ts (21 studio EQ presets)
+│   │                             #   eq-presets.ts (29 studio EQ presets, grouped)
 │   ├── agent/                    # agent core: scheduler, config, jobs (health / scan),
 │   │                             #   writeback (Jellyfin write-back), sound-profile.ts
 │   │                             #   (Auto-EQ analyzer), internet sources (musicbrainz,
@@ -106,7 +107,7 @@ The player bar's waveform button (or **Settings → Playback → "Open studio"**
 | Stage | What it does |
 | --- | --- |
 | Preamp | −24…+12 dB input trim |
-| 10-band EQ | ISO-octave peaking bands (31 Hz … 16 kHz, ±12 dB) with 21 studio presets (Flat, Studio Reference, Acoustic, Bass Boost/Reduce, Classical, Dance, Electronic, Hip-Hop, Jazz, Pop, Rock, Vocal Boost, Harman Target, Late Night, Metal, Podcast/Speech, Lo-Fi Vintage, Tube Warmth, Car Stereo, Cinema) + custom curves |
+| 10-band EQ | ISO-octave peaking bands (31 Hz … 16 kHz, ±12 dB) with **29 studio presets** in three groups — **Genre curves** (Acoustic, Blues & Roots, Ambient & Chill, Classical, Dance, EDM Festival, Electronic, Hip-Hop, Jazz, Jazz Club, Lo-Fi Vintage, Metal, Pop, R&B / Soul, Reggae & Dub, Rock, Vocal Boost, Podcast/Speech), **Studio targets** (Flat, Studio Reference, Harman Target, Tube Warmth) and **Environment & speakers** (Bass Boost, Bass Shaper, Bass Reduce, Small Speakers, Car Stereo, Cinema, Late Night) + custom curves |
 | Crossfeed | bs2b-style headphone correction — a delayed, low-passed cross-bleed of the opposite channel |
 | Stereo width | mid/side matrix from mono (0 %) to extra-wide (150 %) |
 | Balance | StereoPanner left/right trim |
@@ -120,10 +121,11 @@ A canvas **spectrum analyzer** (log-frequency, dBFS grid, peak-hold) and **L/R 2
 With **Agent Auto-EQ** enabled (on by default, toggle in the studio panel), the Library Agent analyzes the playing track or album and adapts the sound output for a better listening experience:
 
 - **Tag layers** are blended: Jellyfin library genres (weight 1.0) → Deezer album genres (0.8) → MusicBrainz artist tags (0.6), each honoring the per-source toggles in the agent settings.
-- Blended tags match against **13 studio genre-class signatures** (electronic, hip-hop, rock, metal, pop, soul, jazz, classical, acoustic, ambient, blues, world, vocal), then tag **accents** refine the curve (sub lift for bass/808, tamed highs for lo-fi/vinyl, air for bright, presence for vocal, width for live) and a **pre-1995 "old master" heuristic** engages loudness normalization.
+- Blended tags match against **15 studio genre-class signatures** (edm, electronic, hip-hop, rock, metal, pop, soul, jazz club, jazz, classical, acoustic, ambient, blues, world, vocal), then tag **accents** refine the curve (sub lift for bass/808, tamed highs for lo-fi/vinyl, air for bright, presence for vocal, width for live) and a **pre-1995 "old master" heuristic** engages loudness normalization.
 - The resulting profile (full 10-band curve, preamp, crossfeed, width, dynamics mode, normalization) is applied live with a **confidence %**, the matched tags and their sources, and a **plain-English rationale** in the studio panel.
 - **Scope** is per **album** by default (one profile for all its tracks — switchable to per-track). Manual control always wins: touching any DSP control shows "Manual override active", and the agent re-engages on the next item. A **Re-analyze** button forces a fresh lookup.
 - Endpoint: `GET /api/agent/sound-profile/[itemId]?itemType=track|album&name=…&artist=…&album=…&genres=…&year=…[&refresh=1]`. Profiles are cached in the agent DB; an inconclusive analysis (e.g. a rate-limited source) retries after a 90 s cooldown instead of poisoning the cache.
+- **Per-genre preset mapping:** every genre signature in the agent's knowledge base is built on a named studio preset (e.g. the Jazz signature is the *Jazz* preset curve, Soul & Funk maps to *R&B / Soul*, World & Groove to *Reggae & Dub*, EDM & Festival to *EDM Festival*). The profile card shows a **mapped-preset chip** — click it to snap the EQ to that preset's exact gains. (Metal is the one exception: the agent deliberately uses its own low-mid-cleanup variant instead of the scooped manual curve.)
 
 ## Library Agent
 
@@ -190,7 +192,15 @@ Each check reports `ok / warn / fail`, aggregated into an overall score (0–100
 
 ### Agent dashboard
 
-The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable, with per-finding server write-back), recent-run logs, and settings. Settings include scan frequency & batch size (numeric fields **plus quick preset chips** — 10/15/30/45/60/120 min, 8/16/32/64 items; changes apply within ~30 s), the write-back mode, per-source toggles, and pause/resume. Manual triggers live in the header: **Health check**, **Scan library**, **Audit** and **Releases**.
+The **Agent** item in the sidebar opens the cockpit: live status, stat cards, the full check list with latencies, a score-history sparkline, the scraped-knowledge table (filterable, with per-finding server write-back), recent-run logs, and settings. Settings include scan frequency & batch size (numeric fields **plus quick preset chips** — 10/15/30/45/60/120 min, 8/16/32/64 items; changes apply within ~30 s), the write-back mode, per-source toggles, and pause/resume. Manual triggers live in the header: **Health check**, **Scan library**, **Audit**, **Releases** and **Digest**.
+
+### Monthly listening digest
+
+A **Digest** tab in the agent dashboard ranks your **most-played artists**:
+
+- Once a day (and on demand via **Snapshot now**) the agent reads Jellyfin's play counts and stores a per-artist snapshot. Today's batch is replaced on re-run, so each day keeps exactly one authoritative snapshot.
+- The digest diffs the newest snapshot against the oldest one **inside the current month** (month-to-date); early in a month it falls back to a **trailing-30-day** window. Until the window spans two snapshot days it shows an honest "building baseline" state — no invented numbers.
+- Each row shows plays gained in the window, all-time totals and a *new* badge for artists with no baseline plays; click an artist to open their page. Snapshots are in-app knowledge — nothing is written back to Jellyfin.
 
 ### 4. Library audit — quality control (hourly rolling sweep)
 
@@ -205,7 +215,7 @@ Each window is audited from scratch and stale findings inside it are pruned — 
 
 Every 12 hours (and on demand via the header **Releases** button) the agent picks a random batch of library artists, looks each one up on MusicBrainz (collaboration credits like "A feat. B" are reduced to the primary artist for matching) and flags **albums/EPs released in the last two years** that are missing from your library. Findings appear under the **Release radar** kind with the artist as anchor and each missing release (title, year, type) in the row; once you add the album, the next run clears the finding automatically. Combined with the on-page "From the internet" discography section, new music surfaces instead of slipping by.
 
-REST endpoints: `GET /api/agent/status`, `POST /api/agent/run` (body `{"job": "health" | "scan" | "audit" | "releases"}`), `GET /api/agent/findings`, `POST /api/agent/findings/[id]/apply`, `GET|POST /api/agent/writeback` (batch body: `{"limit": 100}`), `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`, `GET /api/agent/discography/[artistId]?name=…&fetch=1`, `GET /api/agent/sound-profile/[itemId]?itemType=track|album&…`.
+REST endpoints: `GET /api/agent/status`, `POST /api/agent/run` (body `{"job": "health" | "scan" | "audit" | "releases" | "digest"}`), `GET /api/agent/findings`, `POST /api/agent/findings/[id]/apply`, `GET|POST /api/agent/writeback` (batch body: `{"limit": 100}`), `GET /api/agent/health?history=N`, `GET|PATCH /api/agent/config`, `GET /api/agent/enrichment/[itemId]?kind=bio|artwork|metadata|lyrics&fetch=1`, `GET /api/agent/discography/[artistId]?name=…&fetch=1`, `GET /api/agent/sound-profile/[itemId]?itemType=track|album&…`, `GET /api/agent/digest` (+ `POST` to trigger a snapshot).
 
 ## Known limitations
 

@@ -161,6 +161,10 @@ export interface AgentSoundProfile {
   name: string;
   /** Top genre class the profile leans on ("jazz", "electronic", …) */
   topClass: string;
+  /** Studio preset (lib/audio/eq-presets.ts) the top genre class maps to, if any —
+   *  shown in the Hi-Fi panel as a chip; clicking it snaps to the exact preset curve */
+  presetId?: string;
+  presetName?: string;
   /** All matched tags with the source that provided them */
   tags: { tag: string; source: string }[];
   /** Source names that contributed (library · deezer · musicbrainz) */

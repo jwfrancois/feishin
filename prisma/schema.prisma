@@ -67,6 +67,26 @@ model HealthSnapshot {
   internetOk    Boolean  @default(false)
 }
 
+// Listening digest — per-artist play counts captured in daily batches.
+// All rows of one run share the exact same `takenAt` so batches group cleanly.
+// The scheduler replaces today's batch, so each day holds a single authoritative
+// snapshot; the monthly digest diffs the newest batch against the oldest batch
+// inside the current month (fallback: trailing 30 days).
+model PlaySnapshot {
+  id         String   @id @default(cuid())
+  takenAt    DateTime // batch timestamp — identical for every row of one run
+  level      String   @default("artist") // artist (aggregated from played tracks)
+  artistKey  String // normalized artist name (diacritic-free) — stable join key
+  artistName String
+  artistId   String   @default("") // Jellyfin artist item id (empty when unknown)
+  playCount  Int      @default(0) // summed plays across the artist's tracks
+  trackCount Int      @default(0) // distinct played tracks for this artist
+
+  @@index([takenAt])
+  @@index([artistKey])
+  @@index([takenAt, artistKey])
+}
+
 // Singleton configuration row
 model AgentConfig {
   id                String   @id @default("singleton")

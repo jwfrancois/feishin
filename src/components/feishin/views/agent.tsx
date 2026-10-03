@@ -25,11 +25,14 @@ import {
   Copy,
   Gauge,
   Rocket,
+  BarChart3,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isWritableKind } from "@/lib/agent/writable-kinds";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { useRouterStore } from "@/store/router-store";
 
 // ---------------------------------------------------------------- types
 
@@ -67,11 +70,12 @@ interface AgentStatus {
     lastStage: string;
   };
   runtime: { startedAt: number; booted: boolean; running: string[]; lastTick: number; timerAlive: boolean };
-  running: { health: boolean; scan: boolean; audit: boolean; releases: boolean };
+  running: { health: boolean; scan: boolean; audit: boolean; releases: boolean; digest: boolean };
   lastHealthRun: AgentRunRow | null;
   lastScanRun: AgentRunRow | null;
   lastAuditRun?: AgentRunRow | null;
   lastReleasesRun?: AgentRunRow | null;
+  lastDigestRun?: AgentRunRow | null;
   latestHealth: {
     id: string;
     overall: string;
@@ -113,6 +117,27 @@ interface HistoryPoint {
   serverLatency: number;
   mediaReadable: number;
   memoryMb: number;
+}
+
+interface DigestArtist {
+  artistName: string;
+  artistId: string;
+  delta: number;
+  total: number;
+  isNew: boolean;
+}
+
+interface MonthlyDigest {
+  status: "ready" | "collecting";
+  windowLabel: string;
+  baselineAt: string | null;
+  latestAt: string | null;
+  days: number;
+  artists: DigestArtist[];
+  totalPlays: number;
+  artistsTracked: number;
+  snapshotDays: number;
+  reason?: string;
 }
 
 const KIND_META: Record<string, { label: string; icon: React.ReactNode }> = {
@@ -188,10 +213,12 @@ export function AgentView() {
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [runs, setRuns] = useState<AgentRunRow[]>([]);
   const [kindFilter, setKindFilter] = useState<string>("");
-  const [tab, setTab] = useState<"health" | "enrichments" | "activity" | "settings">("health");
+  const [tab, setTab] = useState<"health" | "digest" | "enrichments" | "activity" | "settings">("health");
   const [busy, setBusy] = useState<string>("");
   const [applying, setApplying] = useState<string>("");
   const [batchBusy, setBatchBusy] = useState(false);
+  const [digest, setDigest] = useState<MonthlyDigest | null>(null);
+  const [snapshotRunning, setSnapshotRunning] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -245,6 +272,36 @@ export function AgentView() {
     }
   }, []);
 
+  const loadDigest = useCallback(async () => {
+    try {
+      const res = await fetch("/api/agent/digest", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { ok: boolean; digest: MonthlyDigest; snapshotRunning: boolean };
+        if (data.ok) {
+          setDigest(data.digest);
+          setSnapshotRunning(data.snapshotRunning);
+        }
+      }
+    } catch {
+      /* transient */
+    }
+  }, []);
+
+  const takeSnapshot = async () => {
+    try {
+      const res = await fetch("/api/agent/digest", { method: "POST" });
+      const data = (await res.json()) as { ok: boolean; started?: boolean };
+      if (data.ok) {
+        setSnapshotRunning(true);
+        toast(data.started ? "Play-count snapshot started" : "Snapshot already running", { duration: 2000 });
+      } else {
+        toast.error("Could not start the snapshot");
+      }
+    } catch {
+      toast.error("Agent unreachable");
+    }
+  };
+
   useEffect(() => {
     void loadStatus();
     void loadFindings();
@@ -259,12 +316,19 @@ export function AgentView() {
     void loadFindings();
   }, [kindFilter, loadFindings]);
 
-  const trigger = async (job: "health" | "scan" | "audit" | "releases") => {
+  useEffect(() => {
+    if (tab !== "digest") return;
+    void loadDigest();
+    const iv = setInterval(() => void loadDigest(), snapshotRunning ? 3_000 : 20_000);
+    return () => clearInterval(iv);
+  }, [tab, snapshotRunning, loadDigest]);
+
+  const trigger = async (job: "health" | "scan" | "audit" | "releases" | "digest") => {
     setBusy(job);
     try {
       const res = await fetch("/api/agent/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job }) });
       const data = (await res.json()) as { ok: boolean; started?: boolean; error?: string };
-      const jobLabels: Record<typeof job, string> = { health: "Health check", scan: "Library scan", audit: "Library audit", releases: "Release radar" };
+      const jobLabels: Record<typeof job, string> = { health: "Health check", scan: "Library scan", audit: "Library audit", releases: "Release radar", digest: "Play-count snapshot" };
       if (data.ok) {
         toast(data.started ? `${jobLabels[job]} started` : "Job already running", { duration: 2000 });
         setTimeout(() => {
@@ -373,7 +437,7 @@ export function AgentView() {
 
   const cfg = status.config;
   const health = status.latestHealth;
-  const runningNow = status.running.health || status.running.scan || status.running.audit || status.running.releases;
+  const runningNow = status.running.health || status.running.scan || status.running.audit || status.running.releases || status.running.digest;
   const foundArtwork = (status.findingCounts.artwork?.found ?? 0) + (status.findingCounts.artwork?.applied ?? 0);
   const foundBios = status.findingCounts.bio?.found ?? 0;
   const foundMeta = status.findingCounts.metadata?.found ?? 0;
@@ -420,6 +484,10 @@ export function AgentView() {
           <Rocket size={14} className={cn(status.running.releases && "fs-spin")} />
           Releases
         </button>
+        <button type="button" className="fs-pill" onClick={() => void trigger("digest")} disabled={busy !== "" || status.running.digest} title="Snapshot play counts for the monthly listening digest">
+          <BarChart3 size={14} className={cn(status.running.digest && "fs-spin")} />
+          Digest
+        </button>
       </div>
 
       {/* stat cards */}
@@ -452,7 +520,7 @@ export function AgentView() {
 
       {/* tabs */}
       <div className="mb-4 flex items-center gap-5 border-b border-[var(--border)]">
-        {(["health", "enrichments", "activity", "settings"] as const).map((t) => (
+        {(["health", "digest", "enrichments", "activity", "settings"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -544,6 +612,121 @@ export function AgentView() {
               Health score over the last {history.length || 0} checks (every {cfg.healthIntervalMin} min). Media readability below 100% usually means a
               media share is unmounted on the server.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------ digest tab */}
+      {tab === "digest" && (
+        <div className="grid gap-4" data-testid="agent-digest-tab">
+          <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-[8px] bg-[var(--primary)]/15 text-[var(--primary)]">
+                  <Trophy size={18} />
+                </div>
+                <div>
+                  <h3 className="text-[14px] font-extrabold text-[var(--fg)]">Monthly listening digest</h3>
+                  <div className="text-[11.5px] text-[var(--fg-dim)]">
+                    {digest
+                      ? digest.status === "ready"
+                        ? `${digest.windowLabel} · ${digest.days} day${digest.days === 1 ? "" : "s"} · ${digest.totalPlays.toLocaleString()} plays across ${digest.artists.length} artists`
+                        : "Play-count baseline in progress"
+                      : "loading…"}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {status.running.digest || snapshotRunning ? <Pill tone="accent">snapshot running…</Pill> : null}
+                <button
+                  type="button"
+                  className="fs-pill"
+                  onClick={() => void takeSnapshot()}
+                  disabled={status.running.digest || snapshotRunning}
+                  title="Capture play counts from Jellyfin now (automatic once a day)"
+                >
+                  <BarChart3 size={14} className={cn((status.running.digest || snapshotRunning) && "fs-spin")} />
+                  Snapshot now
+                </button>
+              </div>
+            </div>
+            {digest?.status === "ready" && digest.baselineAt && digest.latestAt ? (
+              <div className="mt-1.5 text-[11px] text-[var(--fg-dim)]">
+                Diffing snapshots from {new Date(digest.baselineAt).toLocaleDateString()} → {new Date(digest.latestAt).toLocaleDateString()} ·{" "}
+                {digest.artistsTracked.toLocaleString()} artists with plays tracked · {digest.snapshotDays} snapshot day
+                {digest.snapshotDays === 1 ? "" : "s"} stored
+              </div>
+            ) : null}
+          </div>
+
+          {digest === null ? (
+            <div className="h-32 animate-pulse rounded-[6px] bg-[var(--elevated)]" />
+          ) : digest.status === "collecting" ? (
+            <div className="rounded-[6px] border border-dashed border-[var(--border)] p-8 text-center">
+              <BarChart3 size={26} className="mx-auto mb-3 text-[var(--fg-dim)]" />
+              <h4 className="mb-1.5 text-[15px] font-extrabold text-[var(--fg)]">Building your listening baseline</h4>
+              <p className="mx-auto mb-4 max-w-md text-[12.5px] leading-relaxed text-[var(--fg-dim)]">
+                {digest.reason ?? "The agent snapshots play counts daily."} Most-played artists appear once the window spans two snapshot days — usually
+                tomorrow.
+              </p>
+              <button type="button" className="fs-pill" onClick={() => void takeSnapshot()} disabled={status.running.digest || snapshotRunning}>
+                <BarChart3 size={14} className={cn((status.running.digest || snapshotRunning) && "fs-spin")} />
+                Take a snapshot now
+              </button>
+            </div>
+          ) : digest.artists.length === 0 ? (
+            <div className="rounded-[6px] border border-dashed border-[var(--border)] p-8 text-center text-[12.5px] text-[var(--fg-dim)]">
+              No new plays in this window yet — play something and take a new snapshot.
+            </div>
+          ) : (
+            <div className="rounded-[6px] border border-[var(--border)] bg-[var(--elevated)] p-4">
+              <ol className="flex flex-col gap-1">
+                {digest.artists.map((a, i) => {
+                  const maxDelta = digest.artists[0]?.delta || 1;
+                  const openArtist = () => {
+                    if (a.artistId) useRouterStore.getState().navigate({ view: "artist", id: a.artistId });
+                  };
+                  return (
+                    <li
+                      key={`${a.artistName}-${i}`}
+                      className="flex items-center gap-3 rounded px-2 py-2 transition-colors hover:bg-[var(--hover)]"
+                      data-testid={`digest-artist-${i}`}
+                    >
+                      <span className="w-7 text-right text-[13px] font-black tabular-nums text-[var(--fg-dim)]">{i + 1}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          {a.artistId ? (
+                            <button
+                              type="button"
+                              onClick={openArtist}
+                              className="truncate text-[13.5px] font-semibold text-[var(--fg)] hover:text-[var(--primary)] hover:underline"
+                            >
+                              {a.artistName}
+                            </button>
+                          ) : (
+                            <span className="truncate text-[13.5px] font-semibold text-[var(--fg)]">{a.artistName}</span>
+                          )}
+                          {a.isNew && <Pill tone="accent">new</Pill>}
+                        </div>
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--hover)]">
+                          <div className="h-full rounded-full bg-[var(--primary)]/80" style={{ width: `${Math.max(3, (a.delta / maxDelta) * 100)}%` }} />
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-[13.5px] font-bold tabular-nums text-[var(--fg)]">+{a.delta.toLocaleString()}</div>
+                        <div className="text-[10.5px] text-[var(--fg-dim)]">{a.total.toLocaleString()} all-time</div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          )}
+
+          <div className="text-[11.5px] text-[var(--fg-dim)]">
+            How it works: the agent snapshots per-artist play counts from Jellyfin once a day and diffs the newest snapshot against the oldest one in the
+            current month (falling back to a trailing-30-day window early in the month). Snapshots are in-app knowledge — nothing is written back to your
+            server.
           </div>
         </div>
       )}

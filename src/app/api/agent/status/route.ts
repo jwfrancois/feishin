@@ -11,12 +11,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   ensureAgentStarted();
   try {
-    const [cfg, healthRun, scanRun, auditRun, releasesRun, latestHealth, counts, pending] = await Promise.all([
+    const [cfg, healthRun, scanRun, auditRun, releasesRun, digestRun, latestHealth, counts, pending] = await Promise.all([
       ensureConfig(),
       db.agentRun.findFirst({ where: { jobType: "health" }, orderBy: { startedAt: "desc" } }),
       db.agentRun.findFirst({ where: { jobType: "scan" }, orderBy: { startedAt: "desc" } }),
       db.agentRun.findFirst({ where: { jobType: "audit" }, orderBy: { startedAt: "desc" } }),
       db.agentRun.findFirst({ where: { jobType: "releases" }, orderBy: { startedAt: "desc" } }),
+      db.agentRun.findFirst({ where: { jobType: "digest" }, orderBy: { startedAt: "desc" } }),
       db.healthSnapshot.findFirst({ orderBy: { id: "desc" } }),
       db.agentFinding.groupBy({ by: ["kind", "status"], _count: { _all: true } }),
       db.agentFinding.count({ where: { status: "pending" } }),
@@ -32,11 +33,12 @@ export async function GET() {
       ok: true,
       config: cfg,
       runtime: getAgentRuntimeInfo(),
-      running: { health: isJobRunning("health"), scan: isJobRunning("scan"), audit: isJobRunning("audit"), releases: isJobRunning("releases") },
+      running: { health: isJobRunning("health"), scan: isJobRunning("scan"), audit: isJobRunning("audit"), releases: isJobRunning("releases"), digest: isJobRunning("digest") },
       lastHealthRun: healthRun,
       lastScanRun: scanRun,
       lastAuditRun: auditRun,
       lastReleasesRun: releasesRun,
+      lastDigestRun: digestRun,
       latestHealth: latestHealth
         ? { ...latestHealth, checks: JSON.parse(latestHealth.checks ?? "[]") }
         : null,

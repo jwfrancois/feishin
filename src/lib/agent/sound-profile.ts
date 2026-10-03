@@ -13,6 +13,7 @@
 // AgentFinding table (kind="sound") so repeat plays apply instantly.
 import { db } from "@/lib/db";
 import type { AgentSoundProfile } from "@/lib/types";
+import { EQ_PRESETS, type EqPresetId } from "@/lib/audio/eq-presets";
 import { ensureConfig } from "./config";
 import { dzSearchAlbum } from "./sources/deezer";
 import { mbSearchArtist } from "./sources/musicbrainz";
@@ -26,6 +27,9 @@ interface ClassSignature {
   label: string;
   /** keywords matched against lowercased tags (word-ish includes) */
   keys: string[];
+  /** studio preset (eq-presets.ts) this class's curve is built on — shown in the
+   *  Hi-Fi panel as the "mapped preset" chip; null = the agent's own variant */
+  presetId: EqPresetId | null;
   /** 10-band EQ gains in dB (31…16k ISO octaves) */
   gains: number[];
   crossfeed: number;
@@ -49,9 +53,22 @@ const DYN = (mode: AgentSoundProfile["dynamics"]["mode"]): AgentSoundProfile["dy
 
 export const SOUND_CLASSES: ClassSignature[] = [
   {
+    id: "edm",
+    label: "EDM & Festival",
+    keys: ["edm", "big room", "mainstage", "festival", "future bass", "hardstyle", "electro house", "progressive house", "bass house", "psytrance"],
+    presetId: "edm",
+    gains: [6, 5, 2, 0, -1, -0.5, 1, 2.5, 4.5, 5],
+    crossfeed: 0,
+    stereoWidth: 1.2,
+    dynamics: DYN("club"),
+    loudnessNorm: false,
+    why: "festival-scale sub lift with drop-ready air, club glue for wall-of-sound masters",
+  },
+  {
     id: "electronic",
     label: "Electronic",
     keys: ["electronic", "electronica", "techno", "house", "edm", "trance", "dubstep", "drum and bass", "dnb", "jungle", "idm", "synth", "electro", "dance", "club", "rave", "breakbeat", "garage", "downtempo dance"],
+    presetId: "electronic",
     gains: [5, 4, 1.5, 0, -1, -0.5, 1, 2, 4, 4.5],
     crossfeed: 0,
     stereoWidth: 1.15,
@@ -63,6 +80,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "hiphop",
     label: "Hip-Hop",
     keys: ["hip hop", "hip-hop", "hiphop", "rap", "trap", "drill", "grime", "808", "boom bap", "urban", "g-funk"],
+    presetId: "hiphop",
     gains: [5.5, 5, 2.5, 1, -0.5, -1, 0.5, 1.5, 2, 2],
     crossfeed: 0,
     stereoWidth: 1,
@@ -74,6 +92,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "rock",
     label: "Rock",
     keys: ["rock", "grunge", "indie rock", "alt rock", "alternative", "hard rock", "punk", "garage rock", "post-rock", "psych", "emo"],
+    presetId: "rock",
     gains: [3.5, 3, 1.5, 0.5, -0.5, -0.5, 1, 2.5, 3, 2.5],
     crossfeed: 0,
     stereoWidth: 1.05,
@@ -85,6 +104,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "metal",
     label: "Metal",
     keys: ["metal", "metalcore", "doom", "hardcore", "death", "black metal", "thrash", "sludge", "djent"],
+    presetId: null, // agent's own variant — cleans low-mid mud instead of scooping it
     gains: [-1, 1, 2, 1.5, 0, -0.5, 1.5, 2.5, 3, 2],
     crossfeed: 0,
     stereoWidth: 1.1,
@@ -96,6 +116,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "pop",
     label: "Pop",
     keys: ["pop", "k-pop", "kpop", "dance pop", "synth-pop", "teen", "top 40", "electropop", "indie pop"],
+    presetId: "pop",
     gains: [-1, 0.5, 1.5, 2, 2.5, 1.5, 0.5, 1, 2, 1.5],
     crossfeed: 0.05,
     stereoWidth: 1.05,
@@ -107,6 +128,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "soul",
     label: "Soul & Funk",
     keys: ["soul", "funk", "r&b", "rnb", "rhythm and blues", "motown", "gospel", "disco", "neo-soul", "doo-wop"],
+    presetId: "randb",
     gains: [1, 1.5, 2, 2, 1.5, 1.5, 1, 0.5, 1.5, 1],
     crossfeed: 0.1,
     stereoWidth: 1,
@@ -115,9 +137,22 @@ export const SOUND_CLASSES: ClassSignature[] = [
     why: "warm low-mids for horns and bass, top end left calm",
   },
   {
+    id: "jazzclub",
+    label: "Jazz Club",
+    keys: ["vocal jazz", "smooth jazz", "lounge", "cool jazz", "cabaret", "swing revival"],
+    presetId: "jazzclub",
+    gains: [1, 1.5, 2, 1.5, 0.5, 1, 1.5, 2, 1.5, 1],
+    crossfeed: 0.2,
+    stereoWidth: 1.05,
+    dynamics: DYN("off"),
+    loudnessNorm: true,
+    why: "intimate club stage — tight lows, warm presence, gentle top for close-mic'd ensembles",
+  },
+  {
     id: "jazz",
     label: "Jazz",
-    keys: ["jazz", "bebop", "swing", "big band", "fusion", "bossa", "saxophone", "cool jazz", "free jazz", "vocal jazz", "lounge", "smooth jazz"],
+    keys: ["jazz", "bebop", "swing", "big band", "fusion", "bossa", "saxophone", "free jazz"],
+    presetId: "jazz",
     gains: [2, 2, 1, 1, 0.5, 1, 1.5, 2, 2.5, 2],
     crossfeed: 0.25,
     stereoWidth: 1.1,
@@ -129,6 +164,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "classical",
     label: "Classical",
     keys: ["classical", "orchestral", "orchestra", "symphony", "symphonic", "chamber", "opera", "piano", "string quartet", "baroque", "romantic", "modern classical", "concerto", "sonata"],
+    presetId: "classical",
     gains: [2, 1.5, 0.5, 0, 0, 0, 0, 0.5, 1.5, 2.5],
     crossfeed: 0.3,
     stereoWidth: 1.2,
@@ -140,6 +176,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "acoustic",
     label: "Acoustic & Folk",
     keys: ["acoustic", "folk", "singer-songwriter", "unplugged", "guitar", "bluegrass", "americana", "country", "roots", "freak folk", "celtic"],
+    presetId: "acoustic",
     gains: [1.5, 1.5, 1, 0.5, 1, 1, 1.5, 2, 1.5, 0.5],
     crossfeed: 0.2,
     stereoWidth: 1.05,
@@ -151,6 +188,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "ambient",
     label: "Ambient & Chill",
     keys: ["ambient", "chillout", "chill", "lo-fi", "lofi", "new age", "meditation", "drone", "soundscape", "sleep", "focus", "downtempo"],
+    presetId: "chill",
     gains: [2.5, 2.5, 1, 0, 0, -0.5, 0, 1, 2.5, 3],
     crossfeed: 0.15,
     stereoWidth: 1.25,
@@ -162,6 +200,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "blues",
     label: "Blues & Country",
     keys: ["blues", "delta blues", "chicago blues", "jump blues", "gospel blues"],
+    presetId: "blues",
     gains: [1.5, 1.5, 1.5, 1, 0.5, 0.5, 1, 1.5, 1, 0.5],
     crossfeed: 0.2,
     stereoWidth: 1,
@@ -173,6 +212,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "world",
     label: "World & Groove",
     keys: ["reggae", "dub", "ska", "dancehall", "afrobeat", "afrobeats", "salsa", "latin", "bossa nova", "world", "brazil", "cumbia", "highlife", "soca", "reggaeton"],
+    presetId: "reggae",
     gains: [4, 3.5, 2, 1, 0, 0, 0.5, 1, 1.5, 1],
     crossfeed: 0.1,
     stereoWidth: 1.05,
@@ -184,6 +224,7 @@ export const SOUND_CLASSES: ClassSignature[] = [
     id: "vocal",
     label: "Vocal Focus",
     keys: ["vocal", "ballad", "a cappella", "acapella", "choral", "podcast", "speech", "audiobook", "comedy", "spoken word", "voice"],
+    presetId: "vocal",
     gains: [-2, -1.5, -0.5, 0, 1.5, 3, 4, 3.5, 1.5, 0],
     crossfeed: 0.1,
     stereoWidth: 1,
@@ -359,6 +400,7 @@ export function computeProfile(input: SoundProfileInput, tags: Map<string, { wei
 
   // ---- naming --------------------------------------------------------------
   const name = top ? `Agent · ${top.label}` : "Agent · Neutral Reference";
+  const mappedPreset = top?.presetId ? EQ_PRESETS.find((p) => p.id === top.presetId) ?? null : null;
 
   // ---- rationale -----------------------------------------------------------
   const tagList = [...tags.keys()].slice(0, 6);
@@ -366,6 +408,7 @@ export function computeProfile(input: SoundProfileInput, tags: Map<string, { wei
   const parts: string[] = [];
   if (top) {
     parts.push(`${matchedTags.length} matched tag${matchedTags.length === 1 ? "" : "s"} (${tagList.join(", ")}) via ${srcLabel} → ${top.label} curve: ${top.why}`);
+    if (mappedPreset) parts.push(`built on the ${mappedPreset.name} studio preset`);
   } else {
     parts.push(`No recognizable genre signature (tags: ${tagList.length ? tagList.join(", ") : "none"} via ${srcLabel}) — staying bit-transparent; the manual EQ remains yours`);
   }
@@ -378,6 +421,8 @@ export function computeProfile(input: SoundProfileInput, tags: Map<string, { wei
     version: 1,
     name,
     topClass: top?.id ?? "neutral",
+    presetId: mappedPreset?.id,
+    presetName: mappedPreset?.name,
     tags: matchedTags.map((m) => ({ tag: m.tag, source: [...tags.get(m.tag)?.sources ?? ["?"]].join("+") })),
     sources: [...new Set([...tags.values()].flatMap((t) => [...t.sources]))],
     gains,
