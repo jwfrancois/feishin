@@ -288,3 +288,15 @@ Work Log:
 
 Stage Summary:
 - The flaky audio 404/500s are fully explained (both NAS shares offline server-side; proxy is correct and now says so in its errors) — they vanish once the shares are remounted. Credentials are no longer in source: .env (git-ignored) is the single source, with .env.example as template, and fresh browsers auto-discover the server from the proxy. A docker compose up -d --build now installs the player on any desktop/NAS with persistent agent DB + artwork cache.
+
+---
+Task ID: 12b (hotfix)
+Agent: main (Super Z)
+Task: Desktop install failed — user's clone had no .env.example ("Cannot find path .env.example")
+
+Work Log:
+- Root cause: .gitignore rule `.env*` swallowed `.env.example`; the `git add` in Task 12 silently skipped it, so commit 062cb24 shipped Dockerfile/.dockerignore/docker-compose.yml but NOT the env template the README tells users to copy.
+- Fix: added `!.env.example` negation to .gitignore; verified `git check-ignore .env` still ignores the real .env; staged, committed (f6f6cda), pushed to origin/main; `git ls-tree origin/main` now shows .env.example.
+
+Stage Summary:
+- Users can now `git pull` and `copy .env.example .env` as documented. Lesson: after commits that "should" include a dotfile, verify with git ls-tree — gitignore negation or -f is required for any .env* template file.
