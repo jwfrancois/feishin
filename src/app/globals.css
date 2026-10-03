@@ -1,0 +1,358 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ---------------------------------------------------------------------------
+   Feishin rebuild — theme variables (default dark ported from feishin)
+--------------------------------------------------------------------------- */
+:root {
+  --bg: #141414;
+  --bg-alt: #181818;
+  --elevated: #1f1f21;
+  --hover: #242424;
+  --border: rgba(255, 255, 255, 0.1);
+  --fg: #c9c9c9;
+  --fg-dim: #828282;
+  --primary: #3774fc;
+  --primary-contrast: #ffffff;
+  --star: #f08c00;
+  --radius-sm: 3px;
+  --radius-md: 5px;
+
+  /* shadcn mappings */
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card: var(--elevated);
+  --card-foreground: var(--fg);
+  --popover: var(--elevated);
+  --popover-foreground: var(--fg);
+  --primary-foreground: var(--primary-contrast);
+  --secondary: var(--elevated);
+  --secondary-foreground: var(--fg);
+  --muted: var(--elevated);
+  --muted-foreground: var(--fg-dim);
+  --accent: var(--hover);
+  --accent-foreground: var(--fg);
+  --destructive: #e03131;
+  --destructive-foreground: #ffffff;
+  --border-shadcn: var(--border);
+  --input: var(--elevated);
+  --ring: var(--primary);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border-shadcn);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-fg: var(--fg);
+  --color-fg-dim: var(--fg-dim);
+  --color-elevated: var(--elevated);
+  --color-hoverbg: var(--hover);
+  --color-bgalt: var(--bg-alt);
+  --color-star: var(--star);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* feishin-style scrollbars */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Feishin-specific utility classes
+-------------------------------------------------------------------------- */
+
+.fs-input {
+  background: var(--elevated);
+  border: 1px solid transparent;
+  color: var(--fg);
+  border-radius: 4px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.fs-input::placeholder {
+  color: var(--fg-dim);
+}
+.fs-input:focus,
+.fs-input:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--elevated);
+}
+
+.fs-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg);
+  border-radius: 4px;
+  transition: background 0.12s ease, color 0.12s ease;
+  cursor: pointer;
+}
+.fs-icon-btn:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.fs-title-xs {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.text-shadow-hero {
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+/* marquee-ish song table hover */
+.fs-row {
+  transition: background 0.1s ease;
+}
+.fs-row:hover {
+  background: var(--hover);
+}
+.fs-row[data-selected="true"] {
+  background: var(--hover);
+}
+.fs-row[data-playing="true"] .fs-track-title {
+  color: var(--primary);
+}
+
+/* slider (seek + volume) */
+.fs-slider {
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+}
+.fs-slider[data-mode="light"] {
+  background: rgba(0, 0, 0, 0.16);
+}
+.fs-slider-fill {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  border-radius: 2px;
+  background: var(--fg);
+}
+.fs-slider-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg);
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  pointer-events: none;
+}
+.fs-slider:hover .fs-slider-thumb,
+.fs-slider.dragging .fs-slider-thumb {
+  opacity: 1;
+}
+.fs-slider:hover,
+.fs-slider.dragging {
+  height: 6px;
+}
+.fs-slider:hover .fs-slider-fill,
+.fs-slider.dragging .fs-slider-fill {
+  background: var(--primary);
+}
+
+/* feature hero carousel card */
+.fs-hero-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+}
+.fs-hero-card:hover {
+  filter: brightness(1.1);
+}
+
+/* genre stripe */
+.fs-genre {
+  position: relative;
+  background: var(--elevated);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+  padding-left: 14px;
+}
+.fs-genre::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  background: var(--stripe, #555);
+}
+.fs-genre:hover {
+  filter: brightness(1.18);
+}
+
+/* pill buttons (Play / Next / Last) */
+.fs-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--elevated);
+  color: var(--fg);
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 0.55rem 1.4rem;
+  transition: background 0.12s ease, transform 0.06s ease;
+  cursor: pointer;
+}
+.fs-pill:hover {
+  background: var(--hover);
+}
+.fs-pill:active {
+  transform: scale(0.98);
+}
+
+/* context menu (feishin-style dark menu) */
+.fs-menu-content {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  padding: 4px;
+  min-width: 220px;
+  z-index: 100;
+}
+
+/* now playing fullscreen */
+.fs-fs-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  transform: scale(1.4);
+  filter: blur(90px) brightness(0.55) saturate(1.3);
+}
+
+/* fade in animation for views */
+@keyframes fs-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fs-fade {
+  animation: fs-fade 0.18s ease-out;
+}
+
+@keyframes fs-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.fs-spin {
+  animation: fs-spin 1s linear infinite;
+}
+
+/* equalizer bars for playing indicator */
+.fs-eq {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+.fs-eq span {
+  width: 3px;
+  background: var(--primary);
+  animation: fs-eq-bounce 0.9s ease-in-out infinite;
+}
+.fs-eq span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.fs-eq span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes fs-eq-bounce {
+  0%,
+  100% {
+    height: 4px;
+  }
+  50% {
+    height: 14px;
+  }
+}
+
+/* toast overrides */
+[data-sonner-toast] {
+  background: var(--elevated) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--fg) !important;
+}
