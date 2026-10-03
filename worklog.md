@@ -300,3 +300,14 @@ Work Log:
 
 Stage Summary:
 - Users can now `git pull` and `copy .env.example .env` as documented. Lesson: after commits that "should" include a dotfile, verify with git ls-tree — gitignore negation or -f is required for any .env* template file.
+
+---
+Task ID: 12c (deployment confirmed)
+Agent: main (Super Z)
+Task: User desktop install via Docker
+
+Work Log:
+- User confirmed "Everything works perfectly" — Docker deployment on Windows (jwfrancois/feishin clone, .env with Jellyfin creds, compose port remap) is live and connected to the real server.
+
+Stage Summary:
+- Project fully delivered end-to-end: app + agent + Hi-Fi studio + Docker packaging, running on the user's desktop against their Jellyfin server.
