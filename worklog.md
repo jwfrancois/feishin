@@ -58,3 +58,22 @@ Stage Summary:
 - Known gaps: lyrics absent for most tracks (shows "No lyrics available"); genre stripes show name only (10.11 /Genres lacks ItemCount); ratings UI is local-only (Jellyfin user ratings not wired).
 
 
+
+---
+Task ID: 2-github-push
+Agent: main (Super Z)
+Task: Push project code to GitHub as a private repo using user-provided credentials
+
+Work Log:
+- Verified git repo state: branch main, working tree clean, no remote configured
+- Verified GitHub token against api.github.com/user (login: jwfrancois)
+- Checked .env (only local DATABASE_URL, no secrets) and grepped tracked files for hardcoded credentials (Jellyfin creds present in src/lib/jf-server.ts and src/store/auth-store.ts — accepted since repo is private and they are the user's own)
+- Untracked runtime image cache (.cache/jf-img/, 71 binary files) and added /.cache/ to .gitignore
+- Created private repo jwfrancois/feishin via POST /user/repos (private: true)
+- Added remote origin and pushed main (5 commits, 319 tracked files)
+- Verified via API: private: true, default_branch: main
+
+Stage Summary:
+- Code pushed to https://github.com/jwfrancois/feishin (private)
+- Runtime cache excluded from version control
+- Note: Jellyfin server credentials remain hardcoded in src/lib/jf-server.ts / src/store/auth-store.ts
