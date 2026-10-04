@@ -11,6 +11,8 @@ export type Route =
   | { view: "tracks" }
   | { view: "genres" }
   | { view: "genre"; name: string }
+  | { view: "podcasts" }
+  | { view: "podcast"; id: string }
   | { view: "playlists" }
   | { view: "playlist"; id: string }
   | { view: "search"; query?: string }

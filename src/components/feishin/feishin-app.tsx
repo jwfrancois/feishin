@@ -22,6 +22,7 @@ import { ArtistDetailView } from "./views/artist-detail";
 import { TracksView } from "./views/tracks";
 import { GenresView, GenreDetailView } from "./views/genres";
 import { PlaylistsView, PlaylistDetailView } from "./views/playlists";
+import { PodcastsView, PodcastDetailView } from "./views/podcasts";
 import { SearchView } from "./views/search";
 import { FavoritesView } from "./views/favorites";
 import { AgentView } from "./views/agent";
@@ -54,6 +55,10 @@ function MainContent() {
       return <GenresView />;
     case "genre":
       return <GenreDetailView name={route.name} />;
+    case "podcasts":
+      return <PodcastsView />;
+    case "podcast":
+      return <PodcastDetailView podcastId={route.id} />;
     case "playlists":
       return <PlaylistsView />;
     case "playlist":

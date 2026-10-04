@@ -78,8 +78,11 @@ export function useSongActions() {
   }, [addLater]);
 
   const goToAlbum = useCallback(
-    (albumId?: string) => {
-      if (albumId) navigate({ view: "album", id: albumId });
+    (albumId?: string, isPodcast?: boolean) => {
+      if (!albumId) return;
+      // podcast episodes link back to the podcast page, not the album page
+      if (isPodcast) navigate({ view: "podcast", id: albumId });
+      else navigate({ view: "album", id: albumId });
     },
     [navigate],
   );
@@ -196,8 +199,8 @@ export function SongContextMenuContent({
       >
         {fav ? "Remove from favorites" : "Add to favorites"}
       </CtxItem>
-      <CtxItem onSelect={() => actions.goToAlbum(song.albumId)} icon={<Disc3 size={15} />}>
-        Go to album
+      <CtxItem onSelect={() => actions.goToAlbum(song.albumId, song.isPodcast)} icon={<Disc3 size={15} />}>
+        {song.isPodcast ? "Go to podcast" : "Go to album"}
       </CtxItem>
       <CtxItem onSelect={() => actions.goToArtist(song.artistId)} icon={<User size={15} />}>
         Go to artist

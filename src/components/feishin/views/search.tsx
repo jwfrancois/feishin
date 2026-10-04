@@ -7,11 +7,12 @@ import type { SearchResults } from "@/lib/jellyfin";
 import { useRouterStore } from "@/store/router-store";
 import { cn } from "@/lib/utils";
 import { AlbumCard } from "../album-card";
+import { PodcastCard } from "./podcasts";
 import { SongTable } from "../song-table";
 import { ItemImage } from "../shared";
 import { useJfQuery } from "@/hooks/use-jf";
 
-const TABS = ["All", "Songs", "Albums", "Artists"] as const;
+const TABS = ["All", "Songs", "Albums", "Artists", "Podcasts"] as const;
 
 export function SearchView({ initialQuery = "" }: { initialQuery?: string }) {
   const [query, setQuery] = useState(initialQuery);
@@ -105,15 +106,28 @@ export function SearchView({ initialQuery = "" }: { initialQuery?: string }) {
               </div>
             </section>
           )}
+          {(tab === "All" || tab === "Podcasts") && (results?.podcasts.length ?? 0) > 0 && (
+            <section>
+              <h2 className="mb-3 text-lg font-extrabold text-[var(--fg)]">Podcasts</h2>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {results!.podcasts.slice(0, 8).map((podcast) => (
+                  <PodcastCard key={podcast.id} podcast={podcast} width="w-full" />
+                ))}
+              </div>
+            </section>
+          )}
           {(tab === "All" || tab === "Songs") && (results?.songs.length ?? 0) > 0 && (
             <section>
               <h2 className="mb-3 text-lg font-extrabold text-[var(--fg)]">Songs</h2>
               <SongTable songs={results!.songs} columns={["tracknum", "title", "artist", "album", "duration", "fav"]} />
             </section>
           )}
-          {(results?.songs.length ?? 0) === 0 && (results?.albums.length ?? 0) === 0 && (results?.artists.length ?? 0) === 0 && (
-            <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">No results for "{debounced}"</div>
-          )}
+          {(results?.songs.length ?? 0) === 0 &&
+            (results?.albums.length ?? 0) === 0 &&
+            (results?.artists.length ?? 0) === 0 &&
+            (results?.podcasts.length ?? 0) === 0 && (
+              <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">No results for "{debounced}"</div>
+            )}
         </div>
       )}
     </div>

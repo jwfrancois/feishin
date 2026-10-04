@@ -183,7 +183,7 @@ function LeftControls() {
         </button>
         <button
           type="button"
-          onClick={() => actions.goToAlbum(song.albumId)}
+          onClick={() => actions.goToAlbum(song.albumId, song.isPodcast)}
           className="block max-w-full truncate text-left text-[13px] text-[var(--fg-dim)] hover:text-[var(--fg)] hover:underline"
         >
           {song.album}

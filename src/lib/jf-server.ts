@@ -28,6 +28,8 @@ interface ConnState {
   serverName: string | null;
   serverVersion: string | null;
   musicLibraryId: string | null;
+  /** music collection whose name matches /podcast/i — discovered like musicLibraryId */
+  podcastLibraryId: string | null;
   authPromise: Promise<void> | null;
 }
 
@@ -46,6 +48,7 @@ const state: ConnState = (g.__feishinJfState ??= {
   serverName: null,
   serverVersion: null,
   musicLibraryId: null,
+  podcastLibraryId: null,
   authPromise: null,
 });
 
@@ -127,7 +130,7 @@ async function loadServerMeta(): Promise<void> {
       state.serverVersion = info.Version ?? null;
     }
     // discover the music library (first music collection) once
-    if (state.userId && !state.musicLibraryId) {
+    if (state.userId && (!state.musicLibraryId || !state.podcastLibraryId)) {
       const res2 = await fetch(apiUrl(`Users/${state.userId}/Items`), {
         headers: authHeaders(),
         signal: AbortSignal.timeout(20_000),
@@ -136,6 +139,14 @@ async function loadServerMeta(): Promise<void> {
         const data = (await res2.json()) as { Items: { Id: string; Name: string; CollectionType?: string }[] };
         const music = data.Items?.find((i) => i.CollectionType === "music");
         state.musicLibraryId = music?.Id ?? null;
+        // podcast library: a music-type collection explicitly named like podcasts
+        // (episodes live OUTSIDE the music library, so generic queries never see them)
+        if (!state.podcastLibraryId) {
+          const podcast = data.Items?.find(
+            (i) => /podcast/i.test(i.Name ?? "") && (i.CollectionType === "music" || !i.CollectionType),
+          );
+          state.podcastLibraryId = podcast?.Id ?? null;
+        }
       }
     }
   } catch {
@@ -207,24 +218,33 @@ export async function jfFetch(path: string, opts: JfFetchOptions = {}): Promise<
 /** Authenticated fetch that returns parsed JSON, injecting the userId/musicLibraryId automatically. */
 export async function jfJson(path: string, opts: JfFetchOptions = {}): Promise<unknown> {
   const params = opts.params ?? new URLSearchParams();
+  // convenience aliases handled here (rewritten BEFORE the injection blocks so the
+  // rewritten path gets the same userId/parentId treatment as a native call)
+  let realPath = path;
+  // "podcasts/Items" -> Items scoped to the podcast library (discovered in loadServerMeta).
+  // Set BEFORE the music-library injection below, which would otherwise claim parentId first.
+  if (realPath.startsWith("podcasts/")) {
+    realPath = realPath.slice("podcasts/".length);
+    if (realPath === "Items" && !params.get("parentId") && state.podcastLibraryId) {
+      params.set("parentId", state.podcastLibraryId);
+    }
+  }
   // inject userId into typical user-scoped queries
   if (state.userId) {
-    if ((path === "Items" || path === "Genres" || path === "Artists/AlbumArtists") && !params.get("userId")) {
+    if ((realPath === "Items" || realPath === "Genres" || realPath === "Artists/AlbumArtists") && !params.get("userId")) {
       params.set("userId", state.userId);
     }
-    if (path.startsWith("Items/") && path.endsWith("/Similar") && !params.get("userId")) {
+    if (realPath.startsWith("Items/") && realPath.endsWith("/Similar") && !params.get("userId")) {
       params.set("userId", state.userId);
     }
     // like/dislike writes (POST + DELETE /UserItems/{id}/Rating) need explicit userId when using API-key auth
-    if (path.startsWith("UserItems/") && !params.get("userId")) {
+    if (realPath.startsWith("UserItems/") && !params.get("userId")) {
       params.set("userId", state.userId);
     }
   }
-  if (state.musicLibraryId && (path === "Items" || path === "Genres" || path === "Artists/AlbumArtists") && !params.get("parentId")) {
+  if (state.musicLibraryId && (realPath === "Items" || realPath === "Genres" || realPath === "Artists/AlbumArtists") && !params.get("parentId")) {
     params.set("parentId", state.musicLibraryId);
   }
-  // convenience aliases handled here
-  let realPath = path;
   const body = opts.body !== undefined ? { ...(opts.body as Record<string, unknown>) } : undefined;
   if (state.userId) {
     // item/{id} -> Users/{userId}/Items/{id} (single-item fetch, user-scoped UserData)
@@ -232,6 +252,10 @@ export async function jfJson(path: string, opts: JfFetchOptions = {}): Promise<u
     if (itemMatch) realPath = `Users/${state.userId}/Items/${itemMatch[1]}`;
     if (/^favorite\//.test(path) && opts.method) {
       realPath = `Users/${state.userId}/FavoriteItems/${path.slice("favorite/".length)}`;
+    }
+    // played/{id}: POST marks played, DELETE unmarks (UserData.Played on episodes)
+    if (/^played\//.test(path) && opts.method) {
+      realPath = `Users/${state.userId}/PlayedItems/${path.slice("played/".length)}`;
     }
     if (realPath === "Playlists" && opts.method === "POST" && body && !body.UserId) {
       body.UserId = state.userId;
@@ -330,6 +354,7 @@ export function getConnectionState() {
     serverVersion: state.serverVersion,
     userId: state.userId,
     musicLibraryId: state.musicLibraryId,
+    podcastLibraryId: state.podcastLibraryId,
     url: state.conn.url,
     username: state.conn.username,
   };
@@ -346,6 +371,7 @@ export async function configureConnection(conn: Partial<JfConnection>): Promise<
   state.token = null;
   state.userId = null;
   state.musicLibraryId = null;
+  state.podcastLibraryId = null;
   state.serverName = null;
   state.serverVersion = null;
   cache.clear();

@@ -57,6 +57,28 @@ export interface Playlist {
   duration: number;
 }
 
+/** A podcast show (Jellyfin: MusicAlbum entity inside the podcast library) */
+export interface Podcast {
+  id: string;
+  name: string;
+  genre: string;
+  year: number;
+  coverUrl: string;
+  coverTag?: string;
+  episodeCount: number;
+  /** total runtime in seconds (server aggregate; 0 when unknown) */
+  duration: number;
+  overview?: string;
+  playCount: number;
+  /** epoch ms — when the show was added to the library */
+  addedAt: number;
+  /** epoch ms — newest episode's publish date (0 when unknown) */
+  latestAt: number;
+  /** newest episode name (when known) */
+  latestEpisode?: string;
+  likes?: boolean | null;
+}
+
 export interface LibraryData {
   artists: Artist[];
   albums: Album[];
@@ -86,6 +108,14 @@ export interface Song {
   playlistEntryId?: string;
   /** Jellyfin like/dislike (UserData.Likes) — null means neither */
   likes?: boolean | null;
+  /** server-side resume position in seconds (podcast episodes) */
+  resumeAt?: number;
+  /** UserData.Played (podcast episodes) */
+  played?: boolean;
+  /** episode publish/add date in epoch ms (PremiereDate ?? DateCreated) */
+  publishedAt?: number;
+  /** true for podcast episodes — album/queue links route to the podcast view */
+  isPodcast?: boolean;
 }
 
 export function trackToSong(t: Track, albumCover?: string): Song {

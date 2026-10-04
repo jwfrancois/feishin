@@ -144,11 +144,20 @@ export function AudioEngine() {
       onPause={() => {
         const audio = audioRef.current;
         const song = usePlayerStore.getState().queue[usePlayerStore.getState().currentIndex];
-        if (audio && song) reportPlayback("progress", song.id, audio.currentTime, true);
+        if (audio && song) {
+          if (audio.currentTime > 15 && audio.duration && audio.currentTime < audio.duration - 10) {
+            usePlayerStore.getState().setResume(song.id, audio.currentTime);
+          }
+          reportPlayback("progress", song.id, audio.currentTime, true);
+        }
       }}
       onTimeUpdate={(e) => {
         const audio = e.currentTarget;
         usePlayerStore.getState().setPosition(audio.currentTime);
+        // persist resume position (podcasts) ~ every 10s while meaningfully into the item
+        if (audio.currentTime > 15 && audio.duration && audio.currentTime < audio.duration - 10) {
+          usePlayerStore.getState().setResume(audio.dataset.songId ?? "", audio.currentTime);
+        }
         // scrobble when >75% played
         const scrobble = useSettingsStore.getState().playback.scrobble;
         if (scrobble && audio.duration && audio.currentTime > audio.duration * 0.75 && !scrobbledRef.current.has(audio.dataset.songId ?? "")) {
@@ -163,6 +172,17 @@ export function AudioEngine() {
         }
       }}
       onLoadedMetadata={(e) => {
+        const s = usePlayerStore.getState();
+        // podcast resume: jump to the server-side position once, for the song it was armed for
+        const pr = s.pendingResume;
+        if (pr && pr.id === currentSong.id) {
+          s.clearResume();
+          const audio = e.currentTarget;
+          if (Number.isFinite(pr.at) && pr.at > 2 && (!Number.isFinite(audio.duration) || pr.at < audio.duration - 3)) {
+            audio.currentTime = pr.at;
+            s.setPosition(pr.at);
+          }
+        }
         usePlayerStore.getState().setDuration(e.currentTarget.duration || currentSong.duration);
       }}
       onEnded={() => {
@@ -170,6 +190,7 @@ export function AudioEngine() {
         const song = s.queue[s.currentIndex];
         if (song) {
           s.scrobble(song.id);
+          s.setResume(song.id, 0); // finished — drop the resume position
           reportPlayback("stop", song.id, s.duration || 0, false);
         }
         if (stateRef.current.repeat === "one") {

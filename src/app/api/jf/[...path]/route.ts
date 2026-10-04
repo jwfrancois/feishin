@@ -71,6 +71,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     invalidateJfCache("Playlists");
     invalidateJfCache("Filters=IsFavorite");
     invalidateJfCache("UserItems");
+    // played/favorite mutations change UserData embedded in item + list payloads —
+    // narrow by prefix so per-second scrobble POSTs (Sessions/Playing*) don't nuke the cache
+    if (/^(played|favorite)\//.test(p)) {
+      invalidateJfCache("Items");
+      invalidateJfCache("item/");
+    }
     return NextResponse.json(data ?? {});
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Jellyfin request failed" }, { status: 502 });
@@ -88,6 +94,9 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     invalidateJfCache("Playlists");
     invalidateJfCache("Items");
     invalidateJfCache("UserItems");
+    if (/^(played|favorite)\//.test(p)) {
+      invalidateJfCache("item/");
+    }
     return NextResponse.json(res ?? {});
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Jellyfin request failed" }, { status: 502 });

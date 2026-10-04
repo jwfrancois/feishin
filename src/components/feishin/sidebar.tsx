@@ -8,6 +8,7 @@ import {
   Heart,
   Settings as SettingsIcon,
   Music2,
+  Podcast,
   ChevronDown,
   ChevronUp,
   ChevronLeft,
@@ -37,6 +38,7 @@ const LIBRARY_ITEMS: { label: string; icon: React.ReactNode; route: Route }[] = 
   { label: "Tracks", icon: <Music2 size={17} />, route: { view: "tracks" } },
   { label: "Albums", icon: <Disc3 size={17} />, route: { view: "albums" } },
   { label: "Artists", icon: <User size={17} />, route: { view: "artists" } },
+  { label: "Podcasts", icon: <Podcast size={17} />, route: { view: "podcasts" } },
   { label: "Favorites", icon: <Heart size={17} />, route: { view: "favorites" } },
   { label: "Agent", icon: <Bot size={17} />, route: { view: "agent" } },
   { label: "Settings", icon: <SettingsIcon size={17} />, route: { view: "settings" } },
@@ -45,6 +47,7 @@ const LIBRARY_ITEMS: { label: string; icon: React.ReactNode; route: Route }[] = 
 function isActiveRoute(current: Route, target: Route): boolean {
   if (current.view === "album" && target.view === "albums") return true;
   if (current.view === "artist" && target.view === "artists") return true;
+  if (current.view === "podcast" && target.view === "podcasts") return true;
   if ((current.view === "genre" || current.view === "genres") && target.view === "tracks") return false;
   return current.view === target.view;
 }

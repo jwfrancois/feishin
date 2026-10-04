@@ -12,6 +12,8 @@ interface PlayerState {
   position: number;
   duration: number;
   seekTarget: number | null;
+  /** podcast resume: seek to `at` (sec) once the song with this id loads (consumed by AudioEngine) */
+  pendingResume: { id: string; at: number } | null;
   volume: number;
   muted: boolean;
   shuffle: boolean;
@@ -21,6 +23,8 @@ interface PlayerState {
   favoriteArtists: Record<string, boolean>;
   localPlayCounts: Record<string, number>;
   starredAt: Record<string, number>;
+  /** last persisted position (sec) per item id — primary resume source for podcasts */
+  resumePositions: Record<string, number>;
   // actions
   setQueue: (songs: Song[], startIndex?: number, autoplay?: boolean) => void;
   playSong: (song: Song, contextQueue?: Song[]) => void;
@@ -35,6 +39,8 @@ interface PlayerState {
   setDuration: (d: number) => void;
   seek: (p: number) => void;
   clearSeek: () => void;
+  armResume: (id: string, at: number) => void;
+  clearResume: () => void;
   setVolume: (v: number) => void;
   toggleMute: () => void;
   toggleShuffle: () => void;
@@ -46,6 +52,7 @@ interface PlayerState {
   toggleAlbumFavorite: (id: string) => void;
   toggleArtistFavorite: (id: string) => void;
   scrobble: (id: string) => void;
+  setResume: (id: string, pos: number) => void;
   getPlayCount: (id: string, base?: number) => number;
   current: () => Song | undefined;
 }
@@ -59,6 +66,7 @@ export const usePlayerStore = create<PlayerState>()(
       position: 0,
       duration: 0,
       seekTarget: null,
+      pendingResume: null,
       volume: 0.85,
       muted: false,
       shuffle: false,
@@ -68,6 +76,7 @@ export const usePlayerStore = create<PlayerState>()(
       favoriteArtists: {},
       localPlayCounts: {},
       starredAt: {},
+      resumePositions: {},
 
       current: () => {
         const s = get();
@@ -148,6 +157,8 @@ export const usePlayerStore = create<PlayerState>()(
       setDuration: (d) => set({ duration: d }),
       seek: (p) => set({ seekTarget: p, position: p }),
       clearSeek: () => set({ seekTarget: null }),
+      armResume: (id, at) => set({ pendingResume: { id, at } }),
+      clearResume: () => set({ pendingResume: null }),
 
       setVolume: (v) => set({ volume: Math.max(0, Math.min(1, v)), muted: false }),
       toggleMute: () => set((s) => ({ muted: !s.muted })),
@@ -219,6 +230,15 @@ export const usePlayerStore = create<PlayerState>()(
           localPlayCounts: { ...s.localPlayCounts, [id]: (s.localPlayCounts[id] ?? 0) + 1 },
         })),
 
+      /** persist a playback position for later resume; <=0 clears (finished or restarted) */
+      setResume: (id, pos) =>
+        set((s) => {
+          const resumePositions = { ...s.resumePositions };
+          if (pos > 0) resumePositions[id] = pos;
+          else delete resumePositions[id];
+          return { resumePositions };
+        }),
+
       getPlayCount: (id, base = 0) => {
         return base + (get().localPlayCounts[id] ?? 0);
       },
@@ -247,6 +267,7 @@ export const usePlayerStore = create<PlayerState>()(
         favoriteArtists: s.favoriteArtists,
         localPlayCounts: s.localPlayCounts,
         starredAt: s.starredAt,
+        resumePositions: s.resumePositions,
       }),
     },
   ),

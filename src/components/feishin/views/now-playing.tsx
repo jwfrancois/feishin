@@ -359,7 +359,7 @@ export function NowPlayingView() {
               </button>
               <button
                 type="button"
-                onClick={() => album && navigate({ view: "album", id: album.id })}
+                onClick={() => album && navigate(song?.isPodcast ? { view: "podcast", id: album.id } : { view: "album", id: album.id })}
                 className="mt-0.5 block text-[14px] text-white/60 hover:text-white hover:underline"
               >
                 {song.album}

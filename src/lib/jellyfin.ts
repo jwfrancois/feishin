@@ -1,6 +1,6 @@
 // Feishin rebuild — client-side Jellyfin API layer
 // All requests go through the same-origin /api/jf* proxy (token stays server-side).
-import type { Album, Artist, Playlist, Song, GenreInfo } from "./types";
+import type { Album, Artist, Playlist, Podcast, Song, GenreInfo } from "./types";
 import { genreColor } from "./types";
 
 // ---------------------------------------------------------------- raw fetch
@@ -57,7 +57,14 @@ export interface JfItem {
   Overview?: string;
   ImageTags?: { Primary?: string };
   PlaylistItemIds?: string[];
-  UserData?: { PlayCount?: number; IsFavorite?: boolean; Likes?: boolean | null; LastPlayedDate?: string };
+  UserData?: {
+    PlayCount?: number;
+    IsFavorite?: boolean;
+    Likes?: boolean | null;
+    LastPlayedDate?: string;
+    Played?: boolean;
+    PlaybackPositionTicks?: number;
+  };
 }
 
 interface Paged<T> {
@@ -94,6 +101,8 @@ export function mapAlbum(item: JfItem): Album {
 export function mapSong(item: JfItem): Song {
   const artistName =
     item.Artists?.[0] ?? item.AlbumArtists?.[0]?.Name ?? item.AlbumArtist ?? item.ArtistItems?.[0]?.Name ?? "Unknown artist";
+  const resumeTicks = item.UserData?.PlaybackPositionTicks ?? 0;
+  const pubIso = item.PremiereDate ?? item.DateCreated;
   return {
     id: item.Id,
     name: item.Name ?? "Unknown track",
@@ -110,6 +119,27 @@ export function mapSong(item: JfItem): Song {
     audioUrl: jfAudioUrl(item.Id),
     container: item.Container,
     playlistEntryId: item.PlaylistItemIds?.[0],
+    likes: item.UserData?.Likes ?? null,
+    resumeAt: resumeTicks > 0 ? resumeTicks / 1e7 : undefined,
+    played: item.UserData?.Played ?? false,
+    publishedAt: pubIso ? new Date(pubIso).getTime() || undefined : undefined,
+  };
+}
+
+export function mapPodcast(item: JfItem): Podcast {
+  return {
+    id: item.Id,
+    name: item.Name ?? "Unknown podcast",
+    genre: item.Genres?.[0] ?? "",
+    year: yearOf(item),
+    coverUrl: jfImageUrl(item.Id, item.ImageTags?.Primary, 300, item.Name),
+    coverTag: item.ImageTags?.Primary,
+    episodeCount: item.ChildCount ?? 0,
+    duration: (item.RunTimeTicks ?? 0) / 1e7,
+    overview: item.Overview,
+    playCount: item.UserData?.PlayCount ?? 0,
+    addedAt: item.DateCreated ? new Date(item.DateCreated).getTime() || 0 : 0,
+    latestAt: 0,
     likes: item.UserData?.Likes ?? null,
   };
 }
@@ -141,6 +171,9 @@ export function mapPlaylist(item: JfItem): Playlist {
 // ---------------------------------------------------------------- queries
 
 const ALBUM_FIELDS = "ChildCount,Genres,AlbumArtists,ProductionYear";
+// podcast-library queries walk a 70k-episode collection — every extra field costs seconds.
+// Overview/AlbumArtists are not used for podcast cards, so they are omitted.
+const PODCAST_FIELDS = "ChildCount,Genres,ProductionYear";
 const SONG_FIELDS = "Container,Genres,Artists,AlbumArtists";
 const IMG = { imageTypeLimit: 1, enableImageTypes: "Primary" };
 
@@ -303,19 +336,23 @@ export interface SearchResults {
   artists: Artist[];
   albums: Album[];
   songs: Song[];
+  podcasts: Podcast[];
 }
 
 export async function searchAll(term: string): Promise<SearchResults> {
   const q = { searchTerm: term, recursive: "true", ...IMG };
-  const [artists, albums, songs] = await Promise.all([
+  const [artists, albums, songs, podcasts] = await Promise.all([
     jf<Paged<JfItem>>("Artists/AlbumArtists", { ...q, limit: 8, fields: "Genres" }),
     jf<Paged<JfItem>>("Items", { ...q, includeItemTypes: "MusicAlbum", limit: 12, fields: ALBUM_FIELDS }),
     jf<Paged<JfItem>>("Items", { ...q, includeItemTypes: "Audio", limit: 50, fields: SONG_FIELDS }),
+    // shows from the podcast library (separate scope — handled by the proxy alias)
+    jf<Paged<JfItem>>("podcasts/Items", { ...q, includeItemTypes: "MusicAlbum", limit: 8, fields: PODCAST_FIELDS }).catch(() => null),
   ]);
   return {
     artists: (artists.Items ?? []).map(mapArtist),
     albums: (albums.Items ?? []).map(mapAlbum),
     songs: (songs.Items ?? []).map(mapSong),
+    podcasts: (podcasts?.Items ?? []).map(mapPodcast),
   };
 }
 
@@ -384,6 +421,126 @@ export async function fetchPlaylistDetail(playlistId: string): Promise<Playlist 
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------- podcasts
+// Podcasts live in a dedicated "Podcasts" library (discovered server-side).
+// Shows are MusicAlbum entities inside it; episodes are Audio items.
+// The server proxy maps "podcasts/Items" onto that library automatically.
+
+export interface PodcastPageOpts {
+  sortBy?: string;
+  sortOrder?: "Ascending" | "Descending";
+  limit?: number;
+  searchTerm?: string;
+}
+
+export async function fetchPodcastsPage(opts: PodcastPageOpts = {}): Promise<{ podcasts: Podcast[]; total: number }> {
+  const [showsRes, latestRes] = await Promise.all([
+    jf<Paged<JfItem>>("podcasts/Items", {
+      includeItemTypes: "MusicAlbum",
+      recursive: "true",
+      sortBy: opts.sortBy ?? "SortName",
+      sortOrder: opts.sortOrder ?? "Ascending",
+      limit: opts.limit ?? 200,
+      fields: PODCAST_FIELDS,
+      ...IMG,
+      ...(opts.searchTerm ? { searchTerm: opts.searchTerm } : {}),
+    }),
+    // newest episodes across the whole podcast library — merged into shows as
+    // "latest episode / updated N ago" metadata (single request, no N+1)
+    jf<Paged<JfItem>>("podcasts/Items", {
+      includeItemTypes: "Audio",
+      recursive: "true",
+      sortBy: "PremiereDate,DateCreated",
+      sortOrder: "Descending",
+      limit: 240,
+      fields: "PremiereDate,DateCreated",
+    }).catch(() => null),
+  ]);
+  const latestByShow = new Map<string, { at: number; name: string }>();
+  for (const ep of latestRes?.Items ?? []) {
+    const showId = ep.AlbumId;
+    if (!showId || latestByShow.has(showId)) continue;
+    const iso = ep.PremiereDate ?? ep.DateCreated;
+    latestByShow.set(showId, { at: iso ? new Date(iso).getTime() || 0 : 0, name: ep.Name ?? "" });
+  }
+  const podcasts = (showsRes.Items ?? []).map((item) => {
+    const p = mapPodcast(item);
+    const latest = latestByShow.get(p.id);
+    if (latest) {
+      p.latestAt = latest.at;
+      p.latestEpisode = latest.name;
+    }
+    return p;
+  });
+  return { podcasts, total: showsRes.TotalRecordCount ?? podcasts.length };
+}
+
+export async function fetchPodcast(id: string): Promise<Podcast | null> {
+  try {
+    const item = await jf<JfItem>(`item/${id}`);
+    return mapPodcast(item);
+  } catch {
+    return null;
+  }
+}
+
+/** Episodes of one show, newest first. Carries resume/played state per episode.
+ *  Paged (server queries under a podcast parent get slow past ~100 items):
+ *  pass startIndex/limit to walk the list; default returns the newest 100. */
+export async function fetchPodcastEpisodes(
+  podcastId: string,
+  opts: { sortBy?: string; sortOrder?: "Ascending" | "Descending"; startIndex?: number; limit?: number } = {},
+): Promise<{ episodes: Song[]; total: number }> {
+  const data = await jf<Paged<JfItem>>("Items", {
+    includeItemTypes: "Audio",
+    // episodes are direct children of the show — non-recursive is 3-10x faster
+    // on large show archives and stays correct here
+    parentId: podcastId,
+    sortBy: opts.sortBy ?? "PremiereDate,DateCreated,SortName",
+    sortOrder: opts.sortOrder ?? "Descending",
+    startIndex: opts.startIndex,
+    limit: opts.limit ?? 100,
+    fields: SONG_FIELDS,
+  });
+  return {
+    episodes: (data.Items ?? []).map((s) => ({ ...mapSong(s), isPodcast: true })),
+    total: data.TotalRecordCount ?? 0,
+  };
+}
+
+/** Episodes with server-side resume position ("continue listening"), newest activity first. */
+export async function fetchResumableEpisodes(limit = 14): Promise<Song[]> {
+  const data = await jf<Paged<JfItem>>("podcasts/Items", {
+    includeItemTypes: "Audio",
+    recursive: "true",
+    filters: "IsResumable",
+    sortBy: "DatePlayed",
+    sortOrder: "Descending",
+    limit,
+    fields: SONG_FIELDS,
+  });
+  return (data.Items ?? []).map((s) => ({ ...mapSong(s), isPodcast: true }));
+}
+
+/** Most recently published episodes across all shows ("new episodes"). */
+export async function fetchRecentEpisodes(limit = 18): Promise<Song[]> {
+  const data = await jf<Paged<JfItem>>("podcasts/Items", {
+    includeItemTypes: "Audio",
+    recursive: "true",
+    sortBy: "PremiereDate,DateCreated",
+    sortOrder: "Descending",
+    limit,
+    fields: SONG_FIELDS,
+  });
+  return (data.Items ?? []).map((s) => ({ ...mapSong(s), isPodcast: true }));
+}
+
+/** Mark an episode played/unplayed server-side. */
+export async function markPlayed(itemId: string, played: boolean): Promise<void> {
+  if (played) await jfPost(`played/${itemId}`, {}, {});
+  else await jfDelete(`played/${itemId}`);
 }
 
 // ---------------------------------------------------------------- favorites / lyrics / misc
