@@ -436,17 +436,26 @@ export interface PodcastPageOpts {
 }
 
 export async function fetchPodcastsPage(opts: PodcastPageOpts = {}): Promise<{ podcasts: Podcast[]; total: number }> {
+  const showsParams = {
+    includeItemTypes: "MusicAlbum",
+    sortBy: opts.sortBy ?? "SortName",
+    sortOrder: opts.sortOrder ?? "Ascending",
+    limit: opts.limit ?? 200,
+    fields: PODCAST_FIELDS,
+    ...IMG,
+    ...(opts.searchTerm ? { searchTerm: opts.searchTerm } : {}),
+  };
   const [showsRes, latestRes] = await Promise.all([
-    jf<Paged<JfItem>>("podcasts/Items", {
-      includeItemTypes: "MusicAlbum",
-      recursive: "true",
-      sortBy: opts.sortBy ?? "SortName",
-      sortOrder: opts.sortOrder ?? "Ascending",
-      limit: opts.limit ?? 200,
-      fields: PODCAST_FIELDS,
-      ...IMG,
-      ...(opts.searchTerm ? { searchTerm: opts.searchTerm } : {}),
-    }),
+    // Shows sit directly under the podcast library root, so a non-recursive query
+    // is equivalent and far cheaper: recursive enumeration walks every episode
+    // (~70k on this library) and can take 15-57s server-side, which is what
+    // 502'd this page under load. Fall back to recursive only when the flat
+    // query finds nothing (nested folder layouts).
+    (async () => {
+      const flat = await jf<Paged<JfItem>>("podcasts/Items", { ...showsParams, recursive: "false" });
+      if ((flat.TotalRecordCount ?? 0) > 0 || (flat.Items?.length ?? 0) > 0) return flat;
+      return jf<Paged<JfItem>>("podcasts/Items", { ...showsParams, recursive: "true" });
+    })(),
     // newest episodes across the whole podcast library — merged into shows as
     // "latest episode / updated N ago" metadata (single request, no N+1)
     jf<Paged<JfItem>>("podcasts/Items", {

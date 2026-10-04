@@ -225,7 +225,13 @@ export async function jfJson(path: string, opts: JfFetchOptions = {}): Promise<u
   // Set BEFORE the music-library injection below, which would otherwise claim parentId first.
   if (realPath.startsWith("podcasts/")) {
     realPath = realPath.slice("podcasts/".length);
-    if (realPath === "Items" && !params.get("parentId") && state.podcastLibraryId) {
+    if (realPath === "Items" && !params.get("parentId")) {
+      if (!state.podcastLibraryId) {
+        // No podcast library discovered: return an empty page rather than letting
+        // the music-library injection below claim parentId (that silently served
+        // music albums as "podcasts" and made the unscoped recursive query 502).
+        return { Items: [], TotalRecordCount: 0, StartIndex: 0 };
+      }
       params.set("parentId", state.podcastLibraryId);
     }
   }
@@ -281,6 +287,9 @@ interface CacheEntry {
   ttl: number;
   data?: unknown;
   promise?: Promise<unknown>;
+  /** last-known-good data kept after a failed background refresh — served to
+   *  the client while every new request still retries the upstream server */
+  stale?: boolean;
 }
 
 const cache: Map<string, CacheEntry> = (g.__feishinJfCache ??= new Map());
@@ -294,6 +303,9 @@ const CACHE_MAX_ENTRIES = 400;
 function trimCache(): void {
   const now = Date.now();
   for (const [key, entry] of cache) {
+    // stale entries are the last-good fallback for queries whose upstream
+    // refresh failed — never evict them (they recover or get replaced)
+    if (entry.stale) continue;
     if (entry.promise === undefined && entry.data !== undefined && now - entry.ts > entry.ttl) {
       cache.delete(key);
     }
@@ -327,15 +339,34 @@ export async function jfGetCached(path: string, params: URLSearchParams, ttlMs =
   if (entry?.promise) return entry.promise; // in-flight dedupe
 
   const promise = (async () => {
-    const data = await jfJson(path, { params });
+    let data: unknown;
+    try {
+      data = await jfJson(path, { params });
+    } catch (err) {
+      // One quick retry for transient upstream failures (Jellyfin hiccuping
+      // under load, 5xx, timeouts) — avoids turning a momentary stall into a
+      // user-visible error. Auth/4xx failures are not retried.
+      if (isRetryableFetchError(err)) {
+        await new Promise((r) => setTimeout(r, 800));
+        data = await jfJson(path, { params });
+      } else {
+        throw err;
+      }
+    }
     cache.set(key, { ts: Date.now(), ttl: ttlMs, data });
     trimCache();
     return data;
   })();
 
   if (entry?.data !== undefined) {
-    // stale-while-revalidate: serve stale, refresh in background
-    promise.catch(() => cache.delete(key));
+    // stale-while-revalidate: serve stale, refresh in background. If the
+    // refresh fails KEEP the stale entry (marked stale so it retries upstream
+    // on every request) instead of deleting it — serving last-known-good data
+    // beats a 502 error page while the server recovers.
+    promise.catch(() => {
+      const cur = cache.get(key);
+      if (cur && cur.data !== undefined) cache.set(key, { ...cur, promise: undefined, stale: true });
+    });
     return entry.data;
   }
 
@@ -346,6 +377,16 @@ export async function jfGetCached(path: string, params: URLSearchParams, ttlMs =
     cache.delete(key);
     throw err;
   }
+}
+
+/** True for failures worth one retry: network/timeout errors (no status parsed)
+ *  and 408/429/5xx. False for 4xx client errors (bad request, auth, not found). */
+function isRetryableFetchError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : "";
+  const m = /-> (\d{3})/.exec(msg);
+  if (!m) return true;
+  const s = Number(m[1]);
+  return s === 408 || s === 429 || s >= 500;
 }
 
 export function getConnectionState() {

@@ -306,6 +306,23 @@ export function PodcastsView() {
             </div>
           ))}
         </div>
+      ) : showsQ.error && all.length === 0 ? (
+        // upstream failure (e.g. Jellyfin busy/slow -> 502): show a recoverable
+        // error instead of the empty state or a crashed page
+        <div className="mb-6 max-w-xl rounded-[4px] border border-[var(--border)] bg-[var(--elevated)] px-5 py-4">
+          <p className="text-sm font-bold text-[var(--fg)]">Couldn&apos;t load your podcasts</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-[var(--fg-dim)]">
+            The Jellyfin server didn&apos;t respond in time and may be busy. Stale results are shown when available —
+            otherwise try again in a moment.
+          </p>
+          <button
+            type="button"
+            onClick={showsQ.refetch}
+            className="mt-3 rounded-[4px] border border-[var(--border)] px-3 py-1.5 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--hover)]"
+          >
+            Retry
+          </button>
+        </div>
       ) : shows.length === 0 ? (
         <div className="py-16 text-center text-[13.5px] text-[var(--fg-dim)]">
           {filter ? `No podcasts matching "${filter}"` : "No podcasts found"}

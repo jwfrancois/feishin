@@ -24,8 +24,12 @@ function startFetch(key: string, fetcher: () => Promise<unknown>, ttl: number): 
       cache.set(key, { data, ts: Date.now(), ttl });
       return data;
     } catch (err) {
+      // Store the error for the UI (surfaced via the hook's `error`) but do NOT
+      // re-throw: startFetch runs fire-and-forget (effect / stale revalidate /
+      // refetch), so a re-throw here is an unhandled promise rejection — it used
+      // to crash the whole app with a full-screen "Jellyfin: 502" error overlay
+      // whenever the server was slow or restarting. Components render `error`.
       cache.set(key, { error: err instanceof Error ? err.message : "Request failed", ts: Date.now(), ttl });
-      throw err;
     } finally {
       notify(key);
     }

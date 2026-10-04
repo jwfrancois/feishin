@@ -374,3 +374,20 @@ Work Log:
 
 Stage Summary:
 - Podcasts are a first-class library section now: 60 shows / 70k episodes browse smoothly (paged queries tuned around the server's slow recursive scans), episodes play through the existing engine with play-count reporting, resume works across reloads via a local position map merged with server state, played state round-trips to Jellyfin, and shows surface in global search. Nothing was written back beyond standard playback reports and played flags.
+
+---
+Task ID: 15
+Agent: main (Super Z)
+Task: Fix "Jellyfin: 502" runtime crash on the Podcasts page (user-reported error overlay)
+
+Work Log:
+- Diagnosed the reported crash (`Jellyfin: 502 at jf jellyfin.ts:25 <- fetchPodcastsPage:439 <- use-jf.ts:23`): the client `jf()` helper threw when the /api/jf proxy returned 502 (upstream Jellyfin slow/hiccuping — recursive podcast queries over 70k episodes take 15-57s under load), and `useJfQuery.startFetch` re-threw that error from a fire-and-forget promise — an unhandled promise rejection, which Next.js surfaces as a full-screen Runtime Error overlay. Bare "502" message (no detail) = the browser got a non-JSON 502 body (gateway), so `res.json()` failed and only the status code surfaced.
+- use-jf.ts: startFetch no longer re-throws — errors are stored in the cache entry (surfaced via the hook's existing `error` field) and listeners are notified; fire-and-forget callers (effect, stale revalidate, refetch) can never produce unhandled rejections. This is the fix for the crash class, not just this instance.
+- views/podcasts.tsx: new recoverable error panel (message + Retry button) shown when the shows query fails with no cached data; the misleading "No podcasts found" empty state no longer appears on failures.
+- jellyfin.ts fetchPodcastsPage: shows query is now NON-recursive first (recursive fallback only when the flat query returns 0 — nested folder layouts). Verified live: identical result set (60 shows), 3.5-6.9s vs 15s+ recursive; recursive enumeration of 70k episodes was the main latency/502 driver.
+- jf-server.ts: (1) stale-on-error — when a background refresh fails, the last-known-good response is KEPT (marked `stale`, exempt from trimCache eviction) and served while every new request still retries upstream; previously the failed refresh deleted the good stale entry and the next request got a 502. (2) One quick retry (800ms) for retryable upstream failures (network/timeout/408/429/5xx) in the fresh-fetch path; 4xx not retried. (3) Guard: `podcasts/Items` with no discovered podcast library now returns an empty page instead of falling through to the music-library parentId injection (which silently served 7,031 music albums as podcasts on servers without a podcast library).
+- eslint: kept the 3 pre-existing (unused-but-harmless) exhaustive-deps directives — running --fix removes them and exposes deeper react-hooks compiler errors (set-state-in-effect, preserve-manual-memoization) in pre-existing code; verified via stash test that HEAD lints with the same 0-errors/3-warnings state.
+- Verification: tsc 0 errors in src/; eslint 0 errors (3 pre-existing warnings, same as HEAD); live — flat shows query 200/60 shows, warm cache hit fast, per-show episodes 200 in 1.5s (2,780 eps, correct sort), homepage 200. Initial 60s probe timeout was Turbopack on-demand recompile after edits, not a regression.
+
+Stage Summary:
+- The Podcasts page can no longer crash the app: upstream slowness now degrades to (a) stale last-known-good data when available, (b) a retryable error panel when not, and the queries themselves got 2-4x cheaper (non-recursive shows). Root cause of the user-visible "Jellyfin: 502" overlay is eliminated at three layers (client promise handling, server cache resilience, query cost).
