@@ -432,3 +432,17 @@ Work Log:
 
 Stage Summary:
 - ghcr.io/jwfrancois/feishin:latest (amd64 + arm64, tags latest + sha-5be6a06) is live; every future push to main re-publishes automatically. Zero-build deploys now possible on Ubuntu and Portainer (docker-compose.image.yml). Outstanding user-side choice: tick read:packages on the PAT or flip package visibility public.
+
+---
+Task ID: 17-c
+Agent: main (Super Z)
+Task: Close the loop — push remaining commit, confirm both CI runs green, final delivery state
+
+Work Log:
+- Pushed the pending worklog auto-commit 29971db (origin 5be6a06..29971db).
+- API check: run 37707919740 (5be6a06) completed/success; run 37759027418 (29971db) completed/success — both ~14-18 min multi-arch builds.
+- Anonymous manifest check against ghcr.io returned 403 DENIED — package is private (GHCR default). Pulls therefore require auth until visibility is flipped or a read:packages token is used on hosts.
+- Re-confirmed the outstanding user-side choice from 17-b: make package public (simplest) or `docker login ghcr.io` with a PAT that has read:packages on each deployment host.
+
+Stage Summary:
+- CI pipeline fully verified: every push to main re-publishes ghcr.io/jwfrancois/feishin:latest (amd64+arm64). Local tree clean of pending CI work; deployment docs (Task 16/17) are now fully actionable once the user picks the package-visibility option.
