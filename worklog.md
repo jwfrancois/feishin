@@ -404,3 +404,17 @@ Work Log:
 
 Stage Summary:
 - Deployment story now covers desktop (Windows), Ubuntu Server, and Portainer (both management styles); portainer compose variant pushed so a repository stack can be deployed without ever committing secrets.
+
+---
+Task ID: 17
+Agent: main (Super Z)
+Task: GHCR image publishing (GitHub Actions) + pull-and-run deployment path
+
+Work Log:
+- Created .github/workflows/docker-publish.yml: on push to main + workflow_dispatch; buildx multi-arch (linux/amd64 + linux/arm64 — oven/bun and the Next.js standalone runtime are both multi-arch so the same Dockerfile covers x86 servers and ARM NAS/Pi); tags :latest + :sha-<sha> via metadata-action; GITHUB_TOKEN auth (packages:write); GHA layer cache (cache-from/to type=gha,mode=max).
+- Created docker-compose.image.yml: same service/volumes/ports as the other variants but image: ghcr.io/jwfrancois/feishin:latest, no build:, no env_file — ${JELLYFIN_*:-} interpolation reads a local .env (CLI) or Portainer stack env vars (UI). Enables deploys with zero clone-build for CLI, and Portainer repository stacks with fast updates (Re-pull image) — the build-based docker-compose.portainer.yml stays as an option.
+- README: Ubuntu fast path (docker login ghcr.io + compose -f docker-compose.image.yml up -d, no build; update = pull + up -d; make-package-public tip), build-from-source kept as alternative; Portainer rewritten to A) pull-and-run stack (recommended), B) build-from-source stack (rebuild caveat), C) manage-a-CLI-deployment.
+- PUSH BLOCKED for the workflow file: the personal access token lacks the `workflow` scope ("refusing to allow a Personal Access Token to create or update workflow ... without workflow scope"). Split the commit: pushed docker-compose.image.yml + README as f838b9e; the workflow file sits untracked at .github/workflows/docker-publish.yml awaiting the scope grant, then commit+push.
+
+Stage Summary:
+- Deployment matrix complete: desktop build (docker-compose.yml), Portainer build (portainer.yml), and the new zero-build GHCR path (image.yml) for both CLI and Portainer. Pending: user adds `workflow` scope to the classic PAT (editing scopes keeps the token value), then the CI commit pushes and the first image builds automatically on that push.
