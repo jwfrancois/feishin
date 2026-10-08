@@ -418,3 +418,17 @@ Work Log:
 
 Stage Summary:
 - Deployment matrix complete: desktop build (docker-compose.yml), Portainer build (portainer.yml), and the new zero-build GHCR path (image.yml) for both CLI and Portainer. Pending: user adds `workflow` scope to the classic PAT (editing scopes keeps the token value), then the CI commit pushes and the first image builds automatically on that push.
+
+---
+Task ID: 17-b
+Agent: main (Super Z)
+Task: Ship + verify the GHCR publishing workflow (after user added `workflow` scope to the PAT)
+
+Work Log:
+- User granted the `workflow` scope on the classic PAT; the sandbox auto-commit had already captured .github/workflows/docker-publish.yml (+ worklog) — amended its message to "CI: publish ghcr.io/jwfrancois/feishin (amd64+arm64) on push to main" and pushed as 5be6a06.
+- Verified via GitHub API: run 2078169-class job went queued -> in_progress -> completed/success in ~18 min; step-level checks confirmed checkout, QEMU, buildx, GHCR login, metadata all succeeded before the build-push step.
+- GHCR package check via API returned "need read:packages scope" — expected (token has repo+workflow only); the package is private by default. Pulling requires either read:packages on the token or making the package public. Communicated both options to the user.
+- docker-compose.image.yml + README fast paths were already pushed (f838b9e); nothing else pending.
+
+Stage Summary:
+- ghcr.io/jwfrancois/feishin:latest (amd64 + arm64, tags latest + sha-5be6a06) is live; every future push to main re-publishes automatically. Zero-build deploys now possible on Ubuntu and Portainer (docker-compose.image.yml). Outstanding user-side choice: tick read:packages on the PAT or flip package visibility public.
