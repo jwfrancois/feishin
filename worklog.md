@@ -391,3 +391,16 @@ Work Log:
 
 Stage Summary:
 - The Podcasts page can no longer crash the app: upstream slowness now degrades to (a) stale last-known-good data when available, (b) a retryable error panel when not, and the queries themselves got 2-4x cheaper (non-recursive shows). Root cause of the user-visible "Jellyfin: 502" overlay is eliminated at three layers (client promise handling, server cache resilience, query cost).
+
+---
+Task ID: 16
+Agent: main (Super Z)
+Task: Document Docker installation on Ubuntu Server and Portainer
+
+Work Log:
+- Added docker-compose.portainer.yml: same service/volumes/ports as docker-compose.yml but NO env_file (Portainer repository stacks clone the repo without secrets) — JELLYFIN_* / FANARTTV_API_KEY are passed via stack environment variables through compose ${VAR:-} interpolation; empty strings are safe because jf-server treats unset/empty as "unconfigured" and the UI falls back to the in-app add-server login (__configure persists at runtime). YAML validated (service, 6 env entries, volumes).
+- README: new "Deploying on Ubuntu Server" section (get.docker.com install, private-repo clone via token/SSH, cp .env.example .env, compose up --build, ufw allow 3000) and "Deploying with Portainer" section with two paths: A) CLI build + Portainer container management (recommended — updates stay git pull && compose up --build), B) fully Portainer-managed repository stack with the new compose file, including the update-rebuild caveat (delete + redeploy stack; named volumes persist).
+- Noted the "ttp://" README link was a terminal display artifact, not a real typo — left the line untouched.
+
+Stage Summary:
+- Deployment story now covers desktop (Windows), Ubuntu Server, and Portainer (both management styles); portainer compose variant pushed so a repository stack can be deployed without ever committing secrets.
