@@ -1,0 +1,42 @@
+# Feishin (web rebuild) — Portainer stack variant.
+#
+# Use when deploying from Portainer via "Stacks -> Repository" (the repo is
+# private and Portainer clones it WITHOUT secrets, so there is no .env file):
+#
+#   Portainer > Stacks > Add stack
+#     Build method: Repository
+#     Repository URL: https://github.com/jwfrancois/feishin   (branch: main)
+#     Compose path: docker-compose.portainer.yml
+#     Environment variables (add in the UI, type String):
+#       JELLYFIN_URL        https://your-jellyfin-host
+#       JELLYFIN_USERNAME   your-jellyfin-user
+#       JELLYFIN_PASSWORD   your-jellyfin-password
+#       JELLYFIN_API_KEY    your-jellyfin-api-key
+#       FANARTTV_API_KEY    (optional)
+#
+# Variables left empty are fine: the app then shows its in-app add-server
+# login screen, where credentials can be entered once and persist at runtime.
+# For plain-CLI deployments (Ubuntu server, NAS) use docker-compose.yml with a
+# .env file instead — same service, same volumes, different secret delivery.
+services:
+  feishin:
+    build: .
+    image: feishin-web
+    container_name: feishin-web
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: file:/app/db/custom.db
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_USERNAME: ${JELLYFIN_USERNAME:-}
+      JELLYFIN_PASSWORD: ${JELLYFIN_PASSWORD:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      FANARTTV_API_KEY: ${FANARTTV_API_KEY:-}
+    volumes:
+      - feishin-db:/app/db        # Library Agent SQLite database
+      - feishin-cache:/app/.cache # artwork disk cache (300 MB cap, auto-trimmed)
+    restart: unless-stopped
+
+volumes:
+  feishin-db:
+  feishin-cache:

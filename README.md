@@ -59,6 +59,41 @@ docker build -t feishin-web .
 docker run -d --name feishin -p 3000:3000 --env-file .env feishin-web
 ```
 
+## Deploying on Ubuntu Server
+
+```bash
+# 1. Docker Engine + compose plugin (skip if already installed)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER        # log out / in afterwards
+
+# 2. Get the code (private repo — authenticate with a GitHub token or SSH key)
+git clone https://github.com/jwfrancois/feishin.git && cd feishin
+
+# 3. Configure + build
+cp .env.example .env                 # fill in your Jellyfin credentials
+docker compose up -d --build
+
+# 4. Open the firewall if ufw is active
+sudo ufw allow 3000/tcp
+```
+
+The player is then on `http://<server-ip>:3000`. Updates are the same two commands as on the desktop: `git pull && docker compose up -d --build`.
+
+## Deploying with Portainer
+
+Two supported paths:
+
+**A. CLI build + Portainer management (recommended).** Deploy with the normal CLI flow above on the Ubuntu host, then manage the running container from Portainer (Containers → `feishin-web`): logs, console, stats, start/stop/restart all work. Updates stay the simple `git pull && docker compose up -d --build`, and Portainer always shows the real state.
+
+**B. Fully Portainer-managed stack.** Portainer can clone and build the repo itself, but it never sees your `.env` — so use the dedicated compose variant that takes secrets from stack environment variables instead:
+
+1. Portainer → **Stacks → Add stack** → Build method: **Repository**
+2. Repository URL `https://github.com/jwfrancois/feishin`, branch `main`, Compose path `docker-compose.portainer.yml` (authenticate with a GitHub access token when prompted — the repo is private)
+3. Under **Environment variables** add: `JELLYFIN_URL`, `JELLYFIN_USERNAME`, `JELLYFIN_PASSWORD`, `JELLYFIN_API_KEY` (+ optional `FANARTTV_API_KEY`)
+4. **Deploy the stack** — Portainer clones, builds (first build takes a few minutes) and starts the container with the same persistent volumes
+
+Caveat for path B: Portainer's *Update the stack* redeploys but does not reliably rebuild `build:`-based images after code changes. For code updates either delete + redeploy the stack (named volumes survive, so no data is lost) or fall back to the SSH rebuild from path A.
+
 ## Architecture
 
 ```
