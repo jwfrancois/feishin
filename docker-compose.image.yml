@@ -1,0 +1,39 @@
+# Feishin (web rebuild) — pull-and-run variant using the prebuilt GHCR image.
+# No repo clone and NO local build required.
+#
+#   git clone https://github.com/jwfrancois/feishin.git && cd feishin
+#   echo <GITHUB_TOKEN with read:packages> | docker login ghcr.io -u jwfrancois --password-stdin
+#   cp .env.example .env        # fill in your Jellyfin credentials
+#   docker compose -f docker-compose.image.yml up -d
+#
+#   updates:
+#   git pull                    # (only needed to refresh this compose file)
+#   docker compose -f docker-compose.image.yml pull
+#   docker compose -f docker-compose.image.yml up -d
+#
+# Compose reads the .env next to this file for the ${VAR} placeholders below.
+# Portainer repository stacks can also use this file directly as the compose
+# path with the variables provided in the stack's Environment variables UI.
+# Empty/unset variables are safe: the app then shows its in-app add-server
+# login screen, where credentials can be entered once and persist at runtime.
+services:
+  feishin:
+    image: ghcr.io/jwfrancois/feishin:latest
+    container_name: feishin-web
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: file:/app/db/custom.db
+      JELLYFIN_URL: ${JELLYFIN_URL:-}
+      JELLYFIN_USERNAME: ${JELLYFIN_USERNAME:-}
+      JELLYFIN_PASSWORD: ${JELLYFIN_PASSWORD:-}
+      JELLYFIN_API_KEY: ${JELLYFIN_API_KEY:-}
+      FANARTTV_API_KEY: ${FANARTTV_API_KEY:-}
+    volumes:
+      - feishin-db:/app/db        # Library Agent SQLite database
+      - feishin-cache:/app/.cache # artwork disk cache (300 MB cap, auto-trimmed)
+    restart: unless-stopped
+
+volumes:
+  feishin-db:
+  feishin-cache:
